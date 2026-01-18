@@ -1,0 +1,77 @@
+[package]
+name = "rust_stream_deck"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Stream Deck CLI Contributors"]
+description = "Cross-platform CLI and web interface for Elgato Stream Deck devices with agent-friendly robot mode"
+license = "MIT"
+repository = "https://github.com/user/rust_stream_deck"
+keywords = ["streamdeck", "elgato", "hid", "cli", "automation"]
+categories = ["command-line-utilities", "hardware-support"]
+
+[[bin]]
+name = "sd"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive", "env", "unicode", "wrap_help"] }
+clap_complete = "4.5"
+
+# Stream Deck HID
+elgato-streamdeck = "0.12"
+hidapi = "2.6"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Image processing
+image = "0.25"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Terminal output
+colored = "3.0"
+indicatif = "0.17"
+console = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Web server (for local frontend)
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+base64 = "0.22"
+hex = "0.4"
+
+[build-dependencies]
+vergen-gix = { version = "1.0", features = ["build", "cargo", "rustc", "si"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
