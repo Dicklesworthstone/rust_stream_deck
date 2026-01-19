@@ -11,10 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .commit_timestamp(true)
         .dirty(true)
         .build()?;
-    let rustc = RustcBuilder::default()
-        .semver(true)
-        .channel(true)
-        .build()?;
+    let rustc = RustcBuilder::default().semver(true).channel(true).build()?;
     let si = SysinfoBuilder::default().build()?;
 
     Emitter::default()

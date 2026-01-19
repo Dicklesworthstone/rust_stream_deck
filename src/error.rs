@@ -4,6 +4,7 @@ use thiserror::Error;
 
 /// Primary error type for Stream Deck operations.
 #[derive(Error, Debug)]
+#[allow(dead_code)] // Some variants reserved for future use
 pub enum SdError {
     // Device errors
     #[error("No Stream Deck devices found")]
@@ -22,7 +23,9 @@ pub enum SdError {
     DeviceCommunication(String),
 
     // Image errors
-    #[error("Invalid image dimensions: expected {expected_w}x{expected_h}, got {actual_w}x{actual_h}")]
+    #[error(
+        "Invalid image dimensions: expected {expected_w}x{expected_h}, got {actual_w}x{actual_h}"
+    )]
     InvalidImageDimensions {
         expected_w: u32,
         expected_h: u32,
@@ -78,7 +81,7 @@ impl SdError {
     }
 
     /// Returns a suggestion for how to fix the error.
-    pub fn suggestion(&self) -> Option<&'static str> {
+    pub const fn suggestion(&self) -> Option<&'static str> {
         match self {
             Self::NoDevicesFound => Some("Ensure Stream Deck is connected via USB"),
             Self::MultipleDevices { .. } => Some("Use --serial to specify which device"),
@@ -89,10 +92,11 @@ impl SdError {
     }
 }
 
-/// Convenience type alias for Results using SdError.
+/// Convenience type alias for Results using `SdError`.
 pub type Result<T> = std::result::Result<T, SdError>;
 
 /// Extension trait for adding context to errors.
+#[allow(dead_code)] // Reserved for future use
 pub trait ResultExt<T> {
     fn with_context<F, S>(self, f: F) -> Result<T>
     where

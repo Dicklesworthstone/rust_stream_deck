@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod cli;
+mod config;
 mod device;
 mod error;
 
@@ -83,6 +84,7 @@ fn run(cli: &Cli) -> Result<()> {
 // === Quick Start (Robot Mode Optimized) ===
 
 /// Prints quick-start help optimized for both humans and AI agents.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type with other commands
 fn print_quick_start(cli: &Cli) -> Result<()> {
     if cli.use_json() {
         print_robot_quick_start();
@@ -155,7 +157,10 @@ fn print_human_quick_start() {
     println!("  {}  Quick-start JSON", "sd --robot".cyan());
     println!();
 
-    println!("{}", "KEY LAYOUT (Stream Deck XL 32-key)".bold().underline());
+    println!(
+        "{}",
+        "KEY LAYOUT (Stream Deck XL 32-key)".bold().underline()
+    );
     println!();
     println!("  Row 0: [0] [1] [2] [3] [4] [5] [6] [7]");
     println!("  Row 1: [8] [9] [10][11][12][13][14][15]");
@@ -249,7 +254,7 @@ fn cmd_list(cli: &Cli, args: &cli::ListArgs) -> Result<()> {
 
 fn cmd_info(cli: &Cli, _args: &cli::InfoArgs) -> Result<()> {
     let device = device::open_device(cli.serial.as_deref())?;
-    let info = device::get_device_info(&device)?;
+    let info = device::get_device_info(&device);
 
     if cli.use_json() {
         output_json(cli, &info);
@@ -264,7 +269,12 @@ fn cmd_info(cli: &Cli, _args: &cli::InfoArgs) -> Result<()> {
             info.key_width,
             info.key_height
         );
-        println!("{}: {} cols x {} rows", "Layout".bold(), info.cols, info.rows);
+        println!(
+            "{}: {} cols x {} rows",
+            "Layout".bold(),
+            info.cols,
+            info.rows
+        );
     }
     Ok(())
 }
@@ -278,7 +288,10 @@ fn cmd_brightness(cli: &Cli, args: &cli::BrightnessArgs) -> Result<()> {
     device::set_brightness(&device, args.level)?;
 
     if cli.use_json() {
-        output_json(cli, &serde_json::json!({ "brightness": args.level, "ok": true }));
+        output_json(
+            cli,
+            &serde_json::json!({ "brightness": args.level, "ok": true }),
+        );
     } else if !cli.quiet {
         println!("Brightness set to {}%", args.level);
     }
@@ -309,7 +322,10 @@ fn cmd_clear_key(cli: &Cli, args: &cli::ClearKeyArgs) -> Result<()> {
     device::clear_key(&device, args.key)?;
 
     if cli.use_json() {
-        output_json(cli, &serde_json::json!({ "key": args.key, "cleared": true }));
+        output_json(
+            cli,
+            &serde_json::json!({ "key": args.key, "cleared": true }),
+        );
     } else if !cli.quiet {
         println!("Key {} cleared", args.key);
     }
@@ -381,7 +397,7 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
 
 fn cmd_read(cli: &Cli, _args: &cli::ReadArgs) -> Result<()> {
     let device = device::open_device(cli.serial.as_deref())?;
-    let states = device::read_button_states(&device)?;
+    let states = device::read_button_states(&device);
 
     if cli.use_json() {
         output_json(cli, &states);
@@ -396,30 +412,34 @@ fn cmd_read(cli: &Cli, _args: &cli::ReadArgs) -> Result<()> {
         if pressed.is_empty() {
             println!("No buttons pressed");
         } else {
-            println!("Pressed: {:?}", pressed);
+            println!("Pressed: {pressed:?}");
         }
     }
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)] // Will return errors when implemented
 fn cmd_init(cli: &Cli, args: &cli::InitArgs) -> Result<()> {
     let _ = (cli, args); // TODO: implement
     eprintln!("Config init not yet implemented");
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)] // Will return errors when implemented
 fn cmd_config(cli: &Cli, args: &cli::ConfigArgs) -> Result<()> {
     let _ = (cli, args); // TODO: implement
     eprintln!("Config show not yet implemented");
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)] // Will return errors when implemented
 fn cmd_serve(cli: &Cli, args: &cli::ServeArgs) -> Result<()> {
     let _ = (cli, args); // TODO: implement
     eprintln!("Web server not yet implemented");
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)] // Consistent return type with other commands
 fn cmd_version(cli: &Cli) -> Result<()> {
     if cli.use_json() {
         output_json(
@@ -435,7 +455,15 @@ fn cmd_version(cli: &Cli) -> Result<()> {
         );
     } else {
         println!("sd {}", build_info::VERSION);
-        println!("git: {}{}", build_info::git_sha(), if build_info::git_dirty() == "true" { " (dirty)" } else { "" });
+        println!(
+            "git: {}{}",
+            build_info::git_sha(),
+            if build_info::git_dirty() == "true" {
+                " (dirty)"
+            } else {
+                ""
+            }
+        );
         println!("built: {}", build_info::build_timestamp());
         println!("rustc: {}", build_info::rustc_semver());
         println!("target: {}", build_info::target());
@@ -443,14 +471,10 @@ fn cmd_version(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)] // Consistent return type with other commands
 fn cmd_completions(_cli: &Cli, args: &cli::CompletionsArgs) -> Result<()> {
     use clap::CommandFactory;
-    clap_complete::generate(
-        args.shell,
-        &mut Cli::command(),
-        "sd",
-        &mut io::stdout(),
-    );
+    clap_complete::generate(args.shell, &mut Cli::command(), "sd", &mut io::stdout());
     Ok(())
 }
 

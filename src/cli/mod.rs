@@ -9,9 +9,16 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "sd", version, about, long_about = None)]
 #[command(propagate_version = true)]
+#[allow(clippy::struct_excessive_bools)] // CLI flags naturally use multiple bools
 pub struct Cli {
     /// Output format (text for humans, json for agents/scripts)
-    #[arg(long, short = 'f', default_value = "text", global = true, env = "SD_FORMAT")]
+    #[arg(
+        long,
+        short = 'f',
+        default_value = "text",
+        global = true,
+        env = "SD_FORMAT"
+    )]
     pub format: OutputFormat,
 
     /// Robot mode: equivalent to --format=json (optimized for AI agents)

@@ -23,7 +23,7 @@ pub struct DeviceInfo {
     pub kind: String,
 }
 
-/// Wrapper around the StreamDeck providing a simplified interface.
+/// Wrapper around the `StreamDeck` providing a simplified interface.
 pub struct Device {
     inner: StreamDeck,
     info: DeviceInfo,
@@ -31,8 +31,8 @@ pub struct Device {
 
 /// List all connected Stream Deck devices.
 pub fn list_devices() -> Result<Vec<DeviceInfo>> {
-    let hid = elgato_streamdeck::new_hidapi()
-        .map_err(|e| SdError::DeviceCommunication(e.to_string()))?;
+    let hid =
+        elgato_streamdeck::new_hidapi().map_err(|e| SdError::DeviceCommunication(e.to_string()))?;
 
     let devices = elgato_streamdeck::list_devices(&hid);
 
@@ -57,8 +57,8 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>> {
 
 /// Open a Stream Deck device, optionally by serial number.
 pub fn open_device(serial: Option<&str>) -> Result<Device> {
-    let hid = elgato_streamdeck::new_hidapi()
-        .map_err(|e| SdError::DeviceCommunication(e.to_string()))?;
+    let hid =
+        elgato_streamdeck::new_hidapi().map_err(|e| SdError::DeviceCommunication(e.to_string()))?;
 
     let devices = elgato_streamdeck::list_devices(&hid);
 
@@ -83,8 +83,8 @@ pub fn open_device(serial: Option<&str>) -> Result<Device> {
     };
 
     // Connect to the device
-    let inner = StreamDeck::connect(&hid, kind, &target_serial)
-        .map_err(|e| SdError::DeviceOpenFailed {
+    let inner =
+        StreamDeck::connect(&hid, kind, &target_serial).map_err(|e| SdError::DeviceOpenFailed {
             serial: target_serial.clone(),
             reason: e.to_string(),
         })?;
@@ -111,8 +111,8 @@ pub fn open_device(serial: Option<&str>) -> Result<Device> {
 }
 
 /// Get detailed device information.
-pub fn get_device_info(device: &Device) -> Result<DeviceInfo> {
-    Ok(device.info.clone())
+pub fn get_device_info(device: &Device) -> DeviceInfo {
+    device.info.clone()
 }
 
 /// Set display brightness (0-100).
@@ -142,6 +142,7 @@ pub fn set_key_image(device: &Device, key: u8, path: &Path) -> Result<()> {
     let img = image::open(path).map_err(|e| SdError::ImageProcessing(e.to_string()))?;
 
     // Resize to key dimensions
+    #[allow(clippy::cast_possible_truncation)] // Key dimensions are always small
     let resized = img.resize_exact(
         device.info.key_width as u32,
         device.info.key_height as u32,
@@ -204,10 +205,8 @@ pub fn fill_key_color(device: &Device, key: u8, color: (u8, u8, u8)) -> Result<(
         });
     }
 
-    let mut img = image::RgbImage::new(
-        device.info.key_width as u32,
-        device.info.key_height as u32,
-    );
+    #[allow(clippy::cast_possible_truncation)] // Key dimensions are always small
+    let mut img = image::RgbImage::new(device.info.key_width as u32, device.info.key_height as u32);
     for pixel in img.pixels_mut() {
         *pixel = image::Rgb([color.0, color.1, color.2]);
     }
@@ -227,10 +226,9 @@ pub fn fill_key_color(device: &Device, key: u8, color: (u8, u8, u8)) -> Result<(
 pub fn fill_all_keys_color(device: &Device, color: (u8, u8, u8)) -> Result<()> {
     for key in 0..device.info.key_count {
         // Set image but don't flush yet
-        let mut img = image::RgbImage::new(
-            device.info.key_width as u32,
-            device.info.key_height as u32,
-        );
+        #[allow(clippy::cast_possible_truncation)] // Key dimensions are always small
+        let mut img =
+            image::RgbImage::new(device.info.key_width as u32, device.info.key_height as u32);
         for pixel in img.pixels_mut() {
             *pixel = image::Rgb([color.0, color.1, color.2]);
         }
@@ -249,6 +247,7 @@ pub fn fill_all_keys_color(device: &Device, color: (u8, u8, u8)) -> Result<()> {
 }
 
 /// Watch for button presses and print events.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type with other device functions
 pub fn watch_buttons(
     device: &Device,
     json_output: bool,
@@ -272,35 +271,28 @@ pub fn watch_buttons(
 
         // Read input with timeout
         let read_timeout = Some(Duration::from_millis(50));
-        match device.inner.read_input(read_timeout) {
-            Ok(input) => {
-                if let StreamDeckInput::ButtonStateChange(states) = input {
-                    for (key, pressed) in states.iter().enumerate() {
-                        if *pressed {
-                            let event = ButtonEvent {
-                                key: key as u8,
-                                pressed: true,
-                                timestamp_ms: start.elapsed().as_millis() as u64,
-                            };
+        if let Ok(StreamDeckInput::ButtonStateChange(states)) =
+            device.inner.read_input(read_timeout)
+        {
+            for (key, pressed) in states.iter().enumerate() {
+                if *pressed {
+                    #[allow(clippy::cast_possible_truncation)] // Key count is always < 256
+                    let event = ButtonEvent {
+                        key: key as u8,
+                        pressed: true,
+                        timestamp_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                    };
 
-                            if json_output {
-                                println!(
-                                    "{}",
-                                    serde_json::to_string(&event).unwrap_or_default()
-                                );
-                            } else {
-                                println!("Key {key}: pressed");
-                            }
+                    if json_output {
+                        println!("{}", serde_json::to_string(&event).unwrap_or_default());
+                    } else {
+                        println!("Key {key}: pressed");
+                    }
 
-                            if once {
-                                return Ok(());
-                            }
-                        }
+                    if once {
+                        return Ok(());
                     }
                 }
-            }
-            Err(_) => {
-                // Timeout or no input, continue
             }
         }
     }
@@ -309,22 +301,22 @@ pub fn watch_buttons(
 }
 
 /// Read current button states once.
-pub fn read_button_states(device: &Device) -> Result<Vec<bool>> {
+pub fn read_button_states(device: &Device) -> Vec<bool> {
     let read_timeout = Some(Duration::from_millis(100));
-    match device.inner.read_input(read_timeout) {
-        Ok(input) => {
+    let default = || vec![false; device.info.key_count as usize];
+
+    device
+        .inner
+        .read_input(read_timeout)
+        .ok()
+        .and_then(|input| {
             if let StreamDeckInput::ButtonStateChange(states) = input {
-                Ok(states)
+                Some(states)
             } else {
-                // No button state change, return all false
-                Ok(vec![false; device.info.key_count as usize])
+                None
             }
-        }
-        Err(_) => {
-            // Timeout or error, return all false
-            Ok(vec![false; device.info.key_count as usize])
-        }
-    }
+        })
+        .unwrap_or_else(default)
 }
 
 /// Button press/release event.
@@ -336,18 +328,20 @@ pub struct ButtonEvent {
 }
 
 /// Convert device kind to human-readable name.
+#[allow(clippy::missing_const_for_fn)] // Returns String which requires allocation
 fn kind_to_name(kind: Kind) -> String {
     match kind {
-        Kind::Original => "Stream Deck (Original)".to_string(),
-        Kind::OriginalV2 => "Stream Deck (Original V2)".to_string(),
-        Kind::Mini => "Stream Deck Mini".to_string(),
-        Kind::MiniMk2 => "Stream Deck Mini MK.2".to_string(),
-        Kind::Xl => "Stream Deck XL".to_string(),
-        Kind::XlV2 => "Stream Deck XL V2".to_string(),
-        Kind::Mk2 => "Stream Deck MK.2".to_string(),
-        Kind::Pedal => "Stream Deck Pedal".to_string(),
-        Kind::Plus => "Stream Deck +".to_string(),
-        Kind::Neo => "Stream Deck Neo".to_string(),
-        _ => format!("{kind:?}"),
+        Kind::Original => "Stream Deck (Original)",
+        Kind::OriginalV2 => "Stream Deck (Original V2)",
+        Kind::Mini => "Stream Deck Mini",
+        Kind::MiniMk2 => "Stream Deck Mini MK.2",
+        Kind::Xl => "Stream Deck XL",
+        Kind::XlV2 => "Stream Deck XL V2",
+        Kind::Mk2 => "Stream Deck MK.2",
+        Kind::Pedal => "Stream Deck Pedal",
+        Kind::Plus => "Stream Deck +",
+        Kind::Neo => "Stream Deck Neo",
+        _ => "Unknown Stream Deck",
     }
+    .to_string()
 }
