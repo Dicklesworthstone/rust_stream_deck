@@ -42,6 +42,7 @@ anyhow = "1.0"
 colored = "3.0"
 indicatif = "0.17"
 console = "0.15"
+rich_rust = { path = "/dp/rich_rust", features = ["json"] }
 
 # Logging
 tracing = "0.1"
