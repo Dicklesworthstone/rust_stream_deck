@@ -3,6 +3,7 @@
 //! Provides both human-friendly and agent-friendly (robot mode) interfaces.
 #![forbid(unsafe_code)]
 
+mod batch;
 mod cli;
 mod config;
 mod device;
@@ -67,6 +68,7 @@ fn run(cli: &Cli) -> Result<()> {
         Some(Commands::Info(args)) => cmd_info(cli, args),
         Some(Commands::Brightness(args)) => cmd_brightness(cli, args),
         Some(Commands::SetKey(args)) => cmd_set_key(cli, args),
+        Some(Commands::SetKeys(args)) => cmd_set_keys(cli, args),
         Some(Commands::ClearKey(args)) => cmd_clear_key(cli, args),
         Some(Commands::ClearAll(args)) => cmd_clear_all(cli, args),
         Some(Commands::FillKey(args)) => cmd_fill_key(cli, args),
@@ -315,6 +317,228 @@ fn cmd_set_key(cli: &Cli, args: &cli::SetKeyArgs) -> Result<()> {
         println!("Key {} updated", args.key);
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_lines)] // Batch operations are inherently complex
+fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
+    // Open device to get key count
+    let device = device::open_device(cli.serial.as_deref())?;
+    let device_info = device::get_device_info(&device);
+
+    // Scan directory for matching files
+    let scan_result = batch::scan_directory(&args.dir, &args.pattern, device_info.key_count)
+        .map_err(|e| SdError::Other(e.to_string()))?;
+
+    // Handle dry-run mode
+    if args.dry_run {
+        return cmd_set_keys_dry_run(cli, args, &device_info, &scan_result);
+    }
+
+    // Check if we have any files to process
+    if scan_result.mappings.is_empty() {
+        if cli.use_json() {
+            output_json(
+                cli,
+                &serde_json::json!({
+                    "ok": false,
+                    "error": "no_matching_files",
+                    "message": format!("No files matching pattern '{}' found in {}", args.pattern, args.dir.display()),
+                    "unmatched_count": scan_result.unmatched.len(),
+                    "invalid_count": scan_result.invalid.len(),
+                }),
+            );
+        } else {
+            eprintln!(
+                "No files matching pattern '{}' found in {}",
+                args.pattern,
+                args.dir.display()
+            );
+            if !scan_result.unmatched.is_empty() {
+                eprintln!("  {} files didn't match pattern", scan_result.unmatched.len());
+            }
+            if !scan_result.invalid.is_empty() {
+                eprintln!("  {} files had invalid key indices", scan_result.invalid.len());
+            }
+        }
+        return Ok(());
+    }
+
+    // Apply images to keys
+    let mut results: Vec<BatchKeyResult> = Vec::new();
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    for mapping in &scan_result.mappings {
+        // Check key range filter if specified
+        if let Some(ref range) = args.key_range {
+            if !key_in_range(mapping.key, range) {
+                continue;
+            }
+        }
+
+        // Skip if key is below start_key
+        if mapping.key < args.start_key {
+            continue;
+        }
+
+        let result = device::set_key_image(&device, mapping.key, &mapping.path);
+
+        match result {
+            Ok(()) => {
+                success_count += 1;
+                results.push(BatchKeyResult {
+                    key: mapping.key,
+                    path: mapping.path.display().to_string(),
+                    ok: true,
+                    error: None,
+                });
+                if !cli.quiet && !cli.use_json() {
+                    println!("Key {}: {}", mapping.key, mapping.path.display());
+                }
+            }
+            Err(e) => {
+                error_count += 1;
+                results.push(BatchKeyResult {
+                    key: mapping.key,
+                    path: mapping.path.display().to_string(),
+                    ok: false,
+                    error: Some(e.to_string()),
+                });
+
+                if args.continue_on_error {
+                    if !cli.quiet && !cli.use_json() {
+                        eprintln!("Key {} failed: {}", mapping.key, e);
+                    }
+                } else {
+                    // Return immediately on first error if not continuing
+                    if cli.use_json() {
+                        output_json(
+                            cli,
+                            &BatchSetKeysResult {
+                                ok: false,
+                                results,
+                                success_count,
+                                error_count,
+                                skipped_count: 0,
+                            },
+                        );
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    // Output final results
+    if cli.use_json() {
+        output_json(
+            cli,
+            &BatchSetKeysResult {
+                ok: error_count == 0,
+                results,
+                success_count,
+                error_count,
+                skipped_count: scan_result.mappings.len() - success_count - error_count,
+            },
+        );
+    } else if !cli.quiet {
+        println!("Set {success_count} keys ({error_count} errors)");
+    }
+
+    Ok(())
+}
+
+/// Result for a single key in batch operation.
+#[derive(Serialize)]
+struct BatchKeyResult {
+    key: u8,
+    path: String,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Result of batch set-keys operation.
+#[derive(Serialize)]
+struct BatchSetKeysResult {
+    ok: bool,
+    results: Vec<BatchKeyResult>,
+    success_count: usize,
+    error_count: usize,
+    skipped_count: usize,
+}
+
+/// Dry-run handler for set-keys command.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type
+fn cmd_set_keys_dry_run(
+    cli: &Cli,
+    args: &cli::SetKeysArgs,
+    device_info: &device::DeviceInfo,
+    scan_result: &batch::ScanResult,
+) -> Result<()> {
+    if cli.use_json() {
+        output_json(
+            cli,
+            &serde_json::json!({
+                "dry_run": true,
+                "device": {
+                    "serial": device_info.serial,
+                    "model": device_info.product_name,
+                    "key_count": device_info.key_count,
+                },
+                "directory": args.dir.display().to_string(),
+                "pattern": args.pattern,
+                "matched": scan_result.mappings.iter().map(|m| {
+                    serde_json::json!({
+                        "key": m.key,
+                        "path": m.path.display().to_string(),
+                        "size_bytes": m.size_bytes,
+                    })
+                }).collect::<Vec<_>>(),
+                "unmatched_count": scan_result.unmatched.len(),
+                "invalid": scan_result.invalid.iter().map(|(p, reason)| {
+                    serde_json::json!({
+                        "path": p.display().to_string(),
+                        "reason": reason,
+                    })
+                }).collect::<Vec<_>>(),
+            }),
+        );
+    } else {
+        println!("DRY RUN: Would set {} keys from {}", scan_result.mappings.len(), args.dir.display());
+        println!("  Device: {} ({})", device_info.product_name, device_info.serial);
+        println!("  Pattern: {}", args.pattern);
+        println!();
+
+        for mapping in &scan_result.mappings {
+            println!("  Key {}: {} ({} bytes)", mapping.key, mapping.path.display(), mapping.size_bytes);
+        }
+
+        if !scan_result.unmatched.is_empty() {
+            println!();
+            println!("  {} files didn't match pattern", scan_result.unmatched.len());
+        }
+
+        if !scan_result.invalid.is_empty() {
+            println!();
+            println!("  Invalid files:");
+            for (path, reason) in &scan_result.invalid {
+                println!("    {}: {}", path.display(), reason);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check if a key index is within the specified range (e.g., "0-7").
+fn key_in_range(key: u8, range: &str) -> bool {
+    if let Some((start, end)) = range.split_once('-') {
+        if let (Ok(start), Ok(end)) = (start.parse::<u8>(), end.parse::<u8>()) {
+            return key >= start && key <= end;
+        }
+    }
+    // If range parsing fails, include all keys
+    true
 }
 
 fn cmd_clear_key(cli: &Cli, args: &cli::ClearKeyArgs) -> Result<()> {

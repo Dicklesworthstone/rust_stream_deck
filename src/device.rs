@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use elgato_streamdeck::info::Kind;
 use elgato_streamdeck::{StreamDeck, StreamDeckInput};
 use serde::Serialize;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::error::{Result, SdError};
 
@@ -27,6 +28,31 @@ pub struct DeviceInfo {
 pub struct Device {
     inner: StreamDeck,
     info: DeviceInfo,
+}
+
+/// Connection retry options for opening devices.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ConnectionOptions {
+    /// Maximum number of connection attempts (default: 3).
+    pub max_retries: u32,
+    /// Initial delay between retries (default: 1000ms).
+    pub retry_delay: Duration,
+    /// Exponential backoff factor (default: 1.5).
+    pub backoff_factor: f32,
+    /// Maximum delay cap (default: 10000ms).
+    pub max_delay: Duration,
+}
+
+impl Default for ConnectionOptions {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            retry_delay: Duration::from_millis(1000),
+            backoff_factor: 1.5,
+            max_delay: Duration::from_millis(10000),
+        }
+    }
 }
 
 /// List all connected Stream Deck devices.
@@ -108,6 +134,43 @@ pub fn open_device(serial: Option<&str>) -> Result<Device> {
     };
 
     Ok(Device { inner, info })
+}
+
+/// Open a Stream Deck device with retry/backoff options.
+#[allow(dead_code)]
+pub fn open_device_with_retry(serial: Option<&str>, opts: &ConnectionOptions) -> Result<Device> {
+    let max_retries = opts.max_retries.max(1);
+    let mut delay = opts.retry_delay;
+
+    for attempt in 1..=max_retries {
+        trace!(attempt, max_retries, "Retry loop iteration");
+        debug!(attempt, max_retries, "Opening Stream Deck device");
+        match open_device(serial) {
+            Ok(device) => {
+                info!(attempt, "Device connected successfully");
+                return Ok(device);
+            }
+            Err(err) if err.is_connection_error() && attempt < max_retries => {
+                warn!(
+                    attempt,
+                    max_retries,
+                    error = %err,
+                    delay_ms = delay.as_millis(),
+                    "Connection failed, retrying"
+                );
+                std::thread::sleep(delay);
+                let next_delay_secs =
+                    (delay.as_secs_f32() * opts.backoff_factor).min(opts.max_delay.as_secs_f32());
+                delay = Duration::from_secs_f32(next_delay_secs);
+            }
+            Err(err) => {
+                error!(attempt, max_retries, error = %err, "Connection failed");
+                return Err(err);
+            }
+        }
+    }
+
+    unreachable!("retry loop guarantees a return before exhaustion");
 }
 
 /// Get detailed device information.

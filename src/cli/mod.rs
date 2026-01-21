@@ -86,6 +86,10 @@ pub enum Commands {
     /// Set a key's image
     SetKey(SetKeyArgs),
 
+    /// Set multiple keys from a directory of images
+    #[command(visible_alias = "batch")]
+    SetKeys(SetKeysArgs),
+
     /// Clear a key (set to black)
     ClearKey(ClearKeyArgs),
 
@@ -168,6 +172,64 @@ pub enum ResizeStrategy {
     Fill,
     /// Stretch to fill (may distort)
     Stretch,
+}
+
+/// Arguments for batch key setting from a directory.
+///
+/// # Examples
+///
+/// ```bash
+/// # Set all keys from directory
+/// sd set-keys ~/my-layout/
+///
+/// # Use custom naming pattern
+/// sd set-keys ~/icons/ --pattern "icon-{index:02d}.png"
+///
+/// # Only set first row (keys 0-7 on XL)
+/// sd set-keys ~/row1/ --key-range 0-7
+///
+/// # Preview changes first
+/// sd set-keys ~/layout/ --dry-run
+/// ```
+#[derive(Parser, Debug)]
+#[allow(clippy::struct_excessive_bools)] // CLI flags naturally use multiple bools
+pub struct SetKeysArgs {
+    /// Directory containing key images
+    #[arg(value_name = "DIR")]
+    pub dir: PathBuf,
+
+    /// Filename pattern with {index} placeholder.
+    /// Supports: {index} (0,1,2...), {index:02d} (00,01,02...)
+    #[arg(long, short = 'p', default_value = "key-{index}.png")]
+    pub pattern: String,
+
+    /// Continue setting other keys if one fails
+    #[arg(long, short = 'c')]
+    pub continue_on_error: bool,
+
+    /// Starting key index (for partial layouts)
+    #[arg(long, default_value = "0")]
+    pub start_key: u8,
+
+    /// Only process keys in this range (e.g., "0-7" for first row)
+    #[arg(long)]
+    pub key_range: Option<String>,
+
+    /// Dry run - show what would happen without applying
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
+
+    /// Clear keys that don't have matching images
+    #[arg(long)]
+    pub clear_missing: bool,
+
+    /// Skip keys that already have the same image (compare by hash)
+    #[arg(long)]
+    pub skip_unchanged: bool,
+
+    /// Resize strategy for images
+    #[arg(long, default_value = "fit")]
+    pub resize: ResizeStrategy,
 }
 
 #[derive(Parser, Debug)]
