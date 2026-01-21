@@ -52,7 +52,12 @@ pub struct Cli {
     pub retry_delay: u64,
 
     /// Maximum delay cap for exponential backoff in milliseconds (default: 10000)
-    #[arg(long, global = true, default_value = "10000", env = "SD_RETRY_MAX_DELAY")]
+    #[arg(
+        long,
+        global = true,
+        default_value = "10000",
+        env = "SD_RETRY_MAX_DELAY"
+    )]
     pub retry_max_delay: u64,
 
     /// Backoff multiplier for retry delay (default: 1.5)

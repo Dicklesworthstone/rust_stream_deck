@@ -114,8 +114,7 @@ pub fn scan_directory(dir: &Path, pattern: &str, key_count: u8) -> Result<ScanRe
     let mut seen_keys: std::collections::HashMap<u8, PathBuf> = std::collections::HashMap::new();
 
     // Read directory entries
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| ScanError::ReadError(dir.to_path_buf(), e))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| ScanError::ReadError(dir.to_path_buf(), e))?;
 
     for entry in entries {
         let entry = entry.map_err(ScanError::EntryError)?;

@@ -10,8 +10,8 @@ use elgato_streamdeck::info::Kind;
 use elgato_streamdeck::{StreamDeck, StreamDeckInput};
 use tracing::{debug, error, info, trace, warn};
 
-use super::info::{ButtonEvent, ConnectionOptions, DeviceInfo};
 use super::DeviceOperations;
+use super::info::{ButtonEvent, ConnectionOptions, DeviceInfo};
 use crate::error::{Result, SdError};
 
 /// Real Stream Deck device wrapper.

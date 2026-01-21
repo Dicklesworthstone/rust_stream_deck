@@ -26,11 +26,28 @@ mod cli_args {
     fn set_keys_help() {
         let cli = CliRunner::new();
         let result = cli.run(&["set-keys", "--help"]);
-        result
-            .assert_success()
-            .assert_stdout_contains("batch")
-            .assert_stdout_contains("DIR")
-            .assert_stdout_contains("pattern");
+        result.assert_success();
+        let stdout = result.stdout.to_lowercase();
+        assert!(
+            stdout.contains("directory"),
+            "Expected help to mention directory. stdout={}",
+            result.stdout
+        );
+        assert!(
+            stdout.contains("dir"),
+            "Expected help to mention DIR. stdout={}",
+            result.stdout
+        );
+        assert!(
+            stdout.contains("pattern"),
+            "Expected help to mention pattern. stdout={}",
+            result.stdout
+        );
+        assert!(
+            stdout.contains("batch") || stdout.contains("aliases"),
+            "Expected help to mention batch alias. stdout={}",
+            result.stdout
+        );
     }
 
     #[test]
@@ -180,9 +197,30 @@ mod error_handling {
 // ============================================================================
 // Robot Mode Error Output Structure Tests
 // ============================================================================
+// Note: Robot mode errors are output to stdout as JSON, but we need to check
+// if the error is properly formatted. These tests verify the error structure.
 
 mod robot_mode_errors {
     use super::*;
+
+    fn parse_error_json(result: &common::cli::CliResult) -> serde_json::Value {
+        let stdout = result.stdout.trim();
+        if !stdout.is_empty() {
+            if let Ok(json) = serde_json::from_str(stdout) {
+                return json;
+            }
+        }
+        let stderr = result.stderr.trim();
+        if !stderr.is_empty() {
+            if let Ok(json) = serde_json::from_str(stderr) {
+                return json;
+            }
+        }
+        panic!(
+            "Expected JSON on stdout or stderr. stdout={}, stderr={}",
+            result.stdout, result.stderr
+        );
+    }
 
     #[test]
     fn no_device_error_is_json() {
@@ -192,13 +230,8 @@ mod robot_mode_errors {
         // Without a device, this should return a JSON error
         let result = cli.run_robot(&["set-keys", batch_dir.to_str().unwrap(), "--dry-run"]);
         result.assert_failure();
-
-        // The error should be valid JSON
-        let json = result.json();
-        assert!(
-            json.get("error").is_some(),
-            "Expected 'error' field in JSON response"
-        );
+        let json = parse_error_json(&result);
+        assert_eq!(json.get("error").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]
@@ -207,10 +240,11 @@ mod robot_mode_errors {
         let result = cli.run_robot(&["clear-all", "--dry-run"]);
         result.assert_failure();
 
-        let json = result.json();
+        let json = parse_error_json(&result);
+        let message = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
         assert!(
-            json.get("message").is_some(),
-            "Expected 'message' field in error JSON"
+            !message.is_empty(),
+            "Expected non-empty message in error JSON"
         );
     }
 
@@ -220,11 +254,10 @@ mod robot_mode_errors {
         let result = cli.run_robot(&["fill-all", "#FF0000", "--dry-run"]);
         result.assert_failure();
 
-        let json = result.json();
-        // The error should include recovery suggestion
+        let json = parse_error_json(&result);
         assert!(
-            json.get("suggestion").is_some() || json.get("recoverable").is_some(),
-            "Expected recovery information in error JSON"
+            json.get("suggestion").is_some() && json.get("recoverable").is_some(),
+            "Expected suggestion and recoverable fields in error JSON"
         );
     }
 
@@ -234,14 +267,11 @@ mod robot_mode_errors {
         let result = cli.run_robot(&["brightness", "50", "--dry-run"]);
         result.assert_failure();
 
-        let json = result.json();
-        let message = json
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let json = parse_error_json(&result);
+        let message = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let message_lc = message.to_lowercase();
         assert!(
-            message.to_lowercase().contains("device")
-                || message.to_lowercase().contains("stream deck"),
+            message_lc.contains("device") || message_lc.contains("stream deck"),
             "Error message should mention device: {message}"
         );
     }

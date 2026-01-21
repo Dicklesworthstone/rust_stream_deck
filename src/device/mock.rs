@@ -29,21 +29,41 @@ use std::sync::{Arc, Mutex};
 
 use tracing::{debug, trace};
 
-use super::info::{DeviceInfo, DeviceModel};
 use super::DeviceOperations;
+use super::info::{DeviceInfo, DeviceModel};
 use crate::error::{Result, SdError};
 
 /// Recorded operation for assertions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operation {
-    SetBrightness { level: u8 },
-    SetKeyImage { key: u8, path: String },
-    ClearKey { key: u8 },
+    SetBrightness {
+        level: u8,
+    },
+    SetKeyImage {
+        key: u8,
+        path: String,
+    },
+    ClearKey {
+        key: u8,
+    },
     ClearAllKeys,
-    FillKeyColor { key: u8, r: u8, g: u8, b: u8 },
-    FillAllKeysColor { r: u8, g: u8, b: u8 },
+    FillKeyColor {
+        key: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+    },
+    FillAllKeysColor {
+        r: u8,
+        g: u8,
+        b: u8,
+    },
     ReadButtonStates,
-    WatchButtons { json_output: bool, once: bool, timeout_secs: u64 },
+    WatchButtons {
+        json_output: bool,
+        once: bool,
+        timeout_secs: u64,
+    },
 }
 
 /// State of a key on the mock device.
@@ -292,9 +312,7 @@ impl MockDevice {
                 g: kg,
                 b: kb,
             }) if kr == r && kg == g && kb == b => {}
-            other => panic!(
-                "Key {key} expected color ({r}, {g}, {b}), but has: {other:?}",
-            ),
+            other => panic!("Key {key} expected color ({r}, {g}, {b}), but has: {other:?}",),
         }
     }
 
@@ -550,7 +568,9 @@ impl MockDeviceBuilder {
     #[must_use]
     pub fn build(self) -> MockDevice {
         let mut device = MockDevice::new(self.model).with_config(self.config);
-        device.brightness.store(self.initial_brightness, Ordering::SeqCst);
+        device
+            .brightness
+            .store(self.initial_brightness, Ordering::SeqCst);
         *device.keys.lock().unwrap() = self.initial_keys;
         device
     }

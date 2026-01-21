@@ -9,9 +9,9 @@ mod real;
 
 pub use info::{ButtonEvent, ConnectionOptions, DeviceInfo, DeviceModel};
 pub use real::{
-    clear_all_keys, clear_key, fill_all_keys_color, fill_key_color, get_device_info, list_devices,
-    open_device, open_device_with_retry, read_button_states, set_brightness, set_key_image,
-    watch_buttons, Device,
+    Device, clear_all_keys, clear_key, fill_all_keys_color, fill_key_color, get_device_info,
+    list_devices, open_device, open_device_with_retry, read_button_states, set_brightness,
+    set_key_image, watch_buttons,
 };
 
 use std::path::Path;

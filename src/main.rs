@@ -9,8 +9,10 @@ mod config;
 mod device;
 mod error;
 mod logging;
+mod output;
 mod snapshot;
 mod state;
+mod theme;
 
 use std::io::{self, IsTerminal};
 
@@ -20,6 +22,7 @@ use serde::Serialize;
 
 use cli::{Cli, Commands};
 use error::{Result, SdError};
+use output::{Output, OutputMode};
 
 /// Build information embedded at compile time.
 mod build_info {
@@ -57,17 +60,21 @@ fn main() {
         colored::control::set_override(false);
     }
 
+    // Prepare output handler
+    let output = OutputMode::from_cli(&cli).into_output();
+
     // Run the command
-    let result = run(&cli);
+    let result = run(&cli, output.as_ref());
 
     // Handle errors
     if let Err(e) = result {
-        output_error(&cli, &e);
+        output.error(&e);
         std::process::exit(1);
     }
 }
 
-fn run(cli: &Cli) -> Result<()> {
+fn run(cli: &Cli, output: &dyn Output) -> Result<()> {
+    let _ = output;
     match &cli.command {
         None => print_quick_start(cli),
         Some(Commands::List(args)) => cmd_list(cli, args),
@@ -390,10 +397,16 @@ fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
                 args.dir.display()
             );
             if !scan_result.unmatched.is_empty() {
-                eprintln!("  {} files didn't match pattern", scan_result.unmatched.len());
+                eprintln!(
+                    "  {} files didn't match pattern",
+                    scan_result.unmatched.len()
+                );
             }
             if !scan_result.invalid.is_empty() {
-                eprintln!("  {} files had invalid key indices", scan_result.invalid.len());
+                eprintln!(
+                    "  {} files had invalid key indices",
+                    scan_result.invalid.len()
+                );
             }
         }
         return Ok(());
@@ -543,18 +556,33 @@ fn cmd_set_keys_dry_run(
             }),
         );
     } else {
-        println!("DRY RUN: Would set {} keys from {}", scan_result.mappings.len(), args.dir.display());
-        println!("  Device: {} ({})", device_info.product_name, device_info.serial);
+        println!(
+            "DRY RUN: Would set {} keys from {}",
+            scan_result.mappings.len(),
+            args.dir.display()
+        );
+        println!(
+            "  Device: {} ({})",
+            device_info.product_name, device_info.serial
+        );
         println!("  Pattern: {}", args.pattern);
         println!();
 
         for mapping in &scan_result.mappings {
-            println!("  Key {}: {} ({} bytes)", mapping.key, mapping.path.display(), mapping.size_bytes);
+            println!(
+                "  Key {}: {} ({} bytes)",
+                mapping.key,
+                mapping.path.display(),
+                mapping.size_bytes
+            );
         }
 
         if !scan_result.unmatched.is_empty() {
             println!();
-            println!("  {} files didn't match pattern", scan_result.unmatched.len());
+            println!(
+                "  {} files didn't match pattern",
+                scan_result.unmatched.len()
+            );
         }
 
         if !scan_result.invalid.is_empty() {
@@ -918,13 +946,13 @@ fn parse_key_range(range: &str, key_count: u8) -> Result<Vec<u8>> {
         )));
     }
 
-    let start: u8 = parts[0].parse().map_err(|_| {
-        SdError::Other(format!("Invalid range start '{}': not a number", parts[0]))
-    })?;
+    let start: u8 = parts[0]
+        .parse()
+        .map_err(|_| SdError::Other(format!("Invalid range start '{}': not a number", parts[0])))?;
 
-    let end: u8 = parts[1].parse().map_err(|_| {
-        SdError::Other(format!("Invalid range end '{}': not a number", parts[1]))
-    })?;
+    let end: u8 = parts[1]
+        .parse()
+        .map_err(|_| SdError::Other(format!("Invalid range end '{}': not a number", parts[1])))?;
 
     if start > end {
         return Err(SdError::Other(format!(
@@ -976,12 +1004,17 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
                 reconnect_attempts += 1;
 
                 // Check max attempts (0 = unlimited)
-                if args.max_reconnect_attempts > 0 && reconnect_attempts > args.max_reconnect_attempts {
+                if args.max_reconnect_attempts > 0
+                    && reconnect_attempts > args.max_reconnect_attempts
+                {
                     // Emit final disconnect event
-                    emit_watch_event(cli, WatchConnectionEvent::Disconnected {
-                        reason: e.to_string(),
-                        reconnecting: false,
-                    });
+                    emit_watch_event(
+                        cli,
+                        WatchConnectionEvent::Disconnected {
+                            reason: e.to_string(),
+                            reconnecting: false,
+                        },
+                    );
 
                     if !cli.quiet && !cli.use_json() {
                         eprintln!(
@@ -997,10 +1030,13 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
                 }
 
                 // Emit disconnect event
-                emit_watch_event(cli, WatchConnectionEvent::Disconnected {
-                    reason: e.to_string(),
-                    reconnecting: true,
-                });
+                emit_watch_event(
+                    cli,
+                    WatchConnectionEvent::Disconnected {
+                        reason: e.to_string(),
+                        reconnecting: true,
+                    },
+                );
 
                 if !cli.quiet && !cli.use_json() {
                     eprintln!(
@@ -1017,10 +1053,13 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
                 }
 
                 // Emit reconnecting event
-                emit_watch_event(cli, WatchConnectionEvent::Reconnecting {
-                    attempt: reconnect_attempts,
-                    delay_ms: reconnect_delay,
-                });
+                emit_watch_event(
+                    cli,
+                    WatchConnectionEvent::Reconnecting {
+                        attempt: reconnect_attempts,
+                        delay_ms: reconnect_delay,
+                    },
+                );
 
                 // Wait before reconnecting
                 std::thread::sleep(std::time::Duration::from_millis(reconnect_delay));
@@ -1031,9 +1070,12 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
                         device = new_device;
 
                         // Emit reconnected event
-                        emit_watch_event(cli, WatchConnectionEvent::Reconnected {
-                            attempt: reconnect_attempts,
-                        });
+                        emit_watch_event(
+                            cli,
+                            WatchConnectionEvent::Reconnected {
+                                attempt: reconnect_attempts,
+                            },
+                        );
 
                         if !cli.quiet && !cli.use_json() {
                             println!("Reconnected successfully");
@@ -1050,7 +1092,8 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
                         #[allow(clippy::cast_possible_truncation)]
                         #[allow(clippy::cast_sign_loss)]
                         {
-                            reconnect_delay = ((reconnect_delay as f64 * RECONNECT_BACKOFF_FACTOR) as u64)
+                            reconnect_delay = ((reconnect_delay as f64 * RECONNECT_BACKOFF_FACTOR)
+                                as u64)
                                 .min(MAX_RECONNECT_DELAY_MS);
                         }
                         // Continue loop to try again
@@ -1671,21 +1714,4 @@ fn output_json<T: Serialize>(cli: &Cli, data: &T) {
         serde_json::to_string_pretty(data).unwrap()
     };
     println!("{json}");
-}
-
-fn output_error(cli: &Cli, error: &SdError) {
-    if cli.use_json() {
-        let json = serde_json::json!({
-            "error": true,
-            "message": error.to_string(),
-            "suggestion": error.suggestion(),
-            "recoverable": error.is_user_recoverable(),
-        });
-        eprintln!("{}", serde_json::to_string_pretty(&json).unwrap());
-    } else {
-        eprintln!("{}: {}", "Error".red().bold(), error);
-        if let Some(suggestion) = error.suggestion() {
-            eprintln!("{}: {}", "Hint".yellow(), suggestion);
-        }
-    }
 }

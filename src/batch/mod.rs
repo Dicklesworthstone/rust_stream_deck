@@ -5,4 +5,4 @@
 
 mod scanner;
 
-pub use scanner::{scan_directory, ScanResult};
+pub use scanner::{ScanResult, scan_directory};

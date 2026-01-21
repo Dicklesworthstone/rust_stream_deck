@@ -15,9 +15,8 @@ pub struct ProfileDb {
 impl ProfileDb {
     /// Opens or creates a database at the given path.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let conn = Connection::open(path.as_ref()).map_err(|e| {
-            SdError::Other(format!("Failed to open database: {e}"))
-        })?;
+        let conn = Connection::open(path.as_ref())
+            .map_err(|e| SdError::Other(format!("Failed to open database: {e}")))?;
 
         let db = Self { conn };
         db.init_schema()?;
@@ -27,9 +26,8 @@ impl ProfileDb {
     /// Creates an in-memory database (useful for testing).
     #[cfg(test)]
     pub fn in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory().map_err(|e| {
-            SdError::Other(format!("Failed to create in-memory database: {e}"))
-        })?;
+        let conn = Connection::open_in_memory()
+            .map_err(|e| SdError::Other(format!("Failed to create in-memory database: {e}")))?;
 
         let db = Self { conn };
         db.init_schema()?;
@@ -38,9 +36,9 @@ impl ProfileDb {
 
     /// Initializes the database schema.
     fn init_schema(&self) -> Result<()> {
-        self.conn.execute_batch(SCHEMA_SQL).map_err(|e| {
-            SdError::Other(format!("Failed to initialize schema: {e}"))
-        })?;
+        self.conn
+            .execute_batch(SCHEMA_SQL)
+            .map_err(|e| SdError::Other(format!("Failed to initialize schema: {e}")))?;
         Ok(())
     }
 
@@ -215,7 +213,8 @@ impl ProfileDb {
             .map_err(|e| SdError::Other(format!("Failed to insert image: {e}")))?;
 
         // If row was ignored due to duplicate, find the existing ID
-        let id: i64 = self.conn
+        let id: i64 = self
+            .conn
             .query_row(
                 "SELECT id FROM image WHERE package_id = ?1 AND content_hash = ?2",
                 params![package_id, content_hash],
@@ -271,7 +270,10 @@ impl ProfileDb {
     /// Deletes a package and all its related data (cascades).
     pub fn delete_package(&self, package_id: i64) -> Result<()> {
         self.conn
-            .execute("DELETE FROM profile_package WHERE id = ?1", params![package_id])
+            .execute(
+                "DELETE FROM profile_package WHERE id = ?1",
+                params![package_id],
+            )
             .map_err(|e| SdError::Other(format!("Failed to delete package: {e}")))?;
         Ok(())
     }
@@ -429,14 +431,16 @@ mod tests {
     fn test_insert_package() {
         let db = ProfileDb::in_memory().unwrap();
 
-        let id = db.insert_package(
-            "Test Profile",
-            "7.1.1.22340",
-            "20GAT9901",
-            1,
-            Some("macOS"),
-            Some("26.2.0"),
-        ).unwrap();
+        let id = db
+            .insert_package(
+                "Test Profile",
+                "7.1.1.22340",
+                "20GAT9901",
+                1,
+                Some("macOS"),
+                Some("26.2.0"),
+            )
+            .unwrap();
 
         assert_eq!(id, 1);
 
@@ -449,10 +453,32 @@ mod tests {
     fn test_insert_image_dedup() {
         let db = ProfileDb::in_memory().unwrap();
 
-        let pkg_id = db.insert_package("Test", "1.0", "DEV", 1, None, None).unwrap();
+        let pkg_id = db
+            .insert_package("Test", "1.0", "DEV", 1, None, None)
+            .unwrap();
 
-        let id1 = db.insert_image(pkg_id, "icon1.png", "abc123", "png", Some(72), Some(72), "base64data").unwrap();
-        let id2 = db.insert_image(pkg_id, "icon2.png", "abc123", "png", Some(72), Some(72), "base64data").unwrap();
+        let id1 = db
+            .insert_image(
+                pkg_id,
+                "icon1.png",
+                "abc123",
+                "png",
+                Some(72),
+                Some(72),
+                "base64data",
+            )
+            .unwrap();
+        let id2 = db
+            .insert_image(
+                pkg_id,
+                "icon2.png",
+                "abc123",
+                "png",
+                Some(72),
+                Some(72),
+                "base64data",
+            )
+            .unwrap();
 
         // Same hash should return same ID
         assert_eq!(id1, id2);
@@ -462,11 +488,31 @@ mod tests {
     fn test_cascade_delete() {
         let db = ProfileDb::in_memory().unwrap();
 
-        let pkg_id = db.insert_package("Test", "1.0", "DEV", 1, None, None).unwrap();
+        let pkg_id = db
+            .insert_package("Test", "1.0", "DEV", 1, None, None)
+            .unwrap();
         let _device_id = db.insert_device(pkg_id, "DEV", "uuid-123", None).unwrap();
-        let profile_id = db.insert_profile(pkg_id, "prof-uuid", "Profile", "3.0", None, None, None).unwrap();
-        let page_id = db.insert_page(profile_id, "page-uuid", None, true, 0).unwrap();
-        let _action_id = db.insert_action(page_id, "action-uuid", 0, 0, "Action", "plugin-uuid", None, None, true, 0, None).unwrap();
+        let profile_id = db
+            .insert_profile(pkg_id, "prof-uuid", "Profile", "3.0", None, None, None)
+            .unwrap();
+        let page_id = db
+            .insert_page(profile_id, "page-uuid", None, true, 0)
+            .unwrap();
+        let _action_id = db
+            .insert_action(
+                page_id,
+                "action-uuid",
+                0,
+                0,
+                "Action",
+                "plugin-uuid",
+                None,
+                None,
+                true,
+                0,
+                None,
+            )
+            .unwrap();
 
         // Delete package should cascade
         db.delete_package(pkg_id).unwrap();

@@ -5,10 +5,10 @@
 
 use std::io::{self, IsTerminal};
 use tracing_subscriber::{
+    EnvFilter,
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
     util::SubscriberInitExt,
-    EnvFilter,
 };
 
 /// Initialize the tracing subscriber based on CLI flags and environment.
@@ -43,8 +43,8 @@ pub fn init_logging(robot_mode: bool, verbose: u8, quiet: bool) {
     };
 
     // Allow RUST_LOG to override, but use our default otherwise
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_directive));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_directive));
 
     if robot_mode {
         // JSON output for AI agents and scripts

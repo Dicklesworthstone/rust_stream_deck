@@ -27,18 +27,16 @@ impl<'db> ProfileLoader<'db> {
 
     /// Loads a profile from a ZIP archive file.
     pub fn load_file<P: AsRef<Path>>(&self, path: P) -> Result<i64> {
-        let file = std::fs::File::open(path.as_ref()).map_err(|e| {
-            SdError::Other(format!("Failed to open profile: {e}"))
-        })?;
+        let file = std::fs::File::open(path.as_ref())
+            .map_err(|e| SdError::Other(format!("Failed to open profile: {e}")))?;
 
         self.load(file)
     }
 
     /// Loads a profile from any readable/seekable source.
     pub fn load<R: Read + Seek>(&self, reader: R) -> Result<i64> {
-        let mut archive = ZipArchive::new(reader).map_err(|e| {
-            SdError::Other(format!("Invalid ZIP archive: {e}"))
-        })?;
+        let mut archive = ZipArchive::new(reader)
+            .map_err(|e| SdError::Other(format!("Invalid ZIP archive: {e}")))?;
 
         // Parse package.json
         let package = self.read_package_json(&mut archive)?;
@@ -72,18 +70,16 @@ impl<'db> ProfileLoader<'db> {
         &self,
         archive: &mut ZipArchive<R>,
     ) -> Result<ProfilePackage> {
-        let mut file = archive.by_name("package.json").map_err(|e| {
-            SdError::Other(format!("Missing package.json: {e}"))
-        })?;
+        let mut file = archive
+            .by_name("package.json")
+            .map_err(|e| SdError::Other(format!("Missing package.json: {e}")))?;
 
         let mut contents = String::new();
-        file.read_to_string(&mut contents).map_err(|e| {
-            SdError::Other(format!("Failed to read package.json: {e}"))
-        })?;
+        file.read_to_string(&mut contents)
+            .map_err(|e| SdError::Other(format!("Failed to read package.json: {e}")))?;
 
-        serde_json::from_str(&contents).map_err(|e| {
-            SdError::ConfigParse(format!("Invalid package.json: {e}"))
-        })
+        serde_json::from_str(&contents)
+            .map_err(|e| SdError::ConfigParse(format!("Invalid package.json: {e}")))
     }
 
     /// Finds the first profile name from manifest.json files.
@@ -92,9 +88,9 @@ impl<'db> ProfileLoader<'db> {
         archive: &mut ZipArchive<R>,
     ) -> Result<String> {
         for i in 0..archive.len() {
-            let file = archive.by_index(i).map_err(|e| {
-                SdError::Other(format!("Failed to read archive entry: {e}"))
-            })?;
+            let file = archive
+                .by_index(i)
+                .map_err(|e| SdError::Other(format!("Failed to read archive entry: {e}")))?;
 
             let name = file.name().to_string();
             if name.ends_with(".sdProfile/manifest.json") {
@@ -112,18 +108,16 @@ impl<'db> ProfileLoader<'db> {
         archive: &mut ZipArchive<R>,
         path: &str,
     ) -> Result<Profile> {
-        let mut file = archive.by_name(path).map_err(|e| {
-            SdError::Other(format!("Failed to open {path}: {e}"))
-        })?;
+        let mut file = archive
+            .by_name(path)
+            .map_err(|e| SdError::Other(format!("Failed to open {path}: {e}")))?;
 
         let mut contents = String::new();
-        file.read_to_string(&mut contents).map_err(|e| {
-            SdError::Other(format!("Failed to read {path}: {e}"))
-        })?;
+        file.read_to_string(&mut contents)
+            .map_err(|e| SdError::Other(format!("Failed to read {path}: {e}")))?;
 
-        serde_json::from_str(&contents).map_err(|e| {
-            SdError::ConfigParse(format!("Invalid profile manifest {path}: {e}"))
-        })
+        serde_json::from_str(&contents)
+            .map_err(|e| SdError::ConfigParse(format!("Invalid profile manifest {path}: {e}")))
     }
 
     /// Reads a page manifest from the archive.
@@ -132,18 +126,16 @@ impl<'db> ProfileLoader<'db> {
         archive: &mut ZipArchive<R>,
         path: &str,
     ) -> Result<Page> {
-        let mut file = archive.by_name(path).map_err(|e| {
-            SdError::Other(format!("Failed to open {path}: {e}"))
-        })?;
+        let mut file = archive
+            .by_name(path)
+            .map_err(|e| SdError::Other(format!("Failed to open {path}: {e}")))?;
 
         let mut contents = String::new();
-        file.read_to_string(&mut contents).map_err(|e| {
-            SdError::Other(format!("Failed to read {path}: {e}"))
-        })?;
+        file.read_to_string(&mut contents)
+            .map_err(|e| SdError::Other(format!("Failed to read {path}: {e}")))?;
 
-        serde_json::from_str(&contents).map_err(|e| {
-            SdError::ConfigParse(format!("Invalid page manifest {path}: {e}"))
-        })
+        serde_json::from_str(&contents)
+            .map_err(|e| SdError::ConfigParse(format!("Invalid page manifest {path}: {e}")))
     }
 
     /// Processes all profiles in the archive.
@@ -155,9 +147,9 @@ impl<'db> ProfileLoader<'db> {
         // First, collect all profile paths
         let mut profile_paths = Vec::new();
         for i in 0..archive.len() {
-            let file = archive.by_index(i).map_err(|e| {
-                SdError::Other(format!("Failed to read archive entry: {e}"))
-            })?;
+            let file = archive
+                .by_index(i)
+                .map_err(|e| SdError::Other(format!("Failed to read archive entry: {e}")))?;
 
             let name = file.name().to_string();
             if name.ends_with(".sdProfile/manifest.json") {
@@ -187,9 +179,9 @@ impl<'db> ProfileLoader<'db> {
         // Collect image paths first
         let mut image_paths = Vec::new();
         for i in 0..archive.len() {
-            let file = archive.by_index(i).map_err(|e| {
-                SdError::Other(format!("Failed to read archive entry: {e}"))
-            })?;
+            let file = archive
+                .by_index(i)
+                .map_err(|e| SdError::Other(format!("Failed to read archive entry: {e}")))?;
 
             let name = file.name().to_string();
             if name.contains("/Images/") && !file.is_dir() {
@@ -199,14 +191,13 @@ impl<'db> ProfileLoader<'db> {
 
         // Process each image
         for path in image_paths {
-            let mut file = archive.by_name(&path).map_err(|e| {
-                SdError::Other(format!("Failed to open image {path}: {e}"))
-            })?;
+            let mut file = archive
+                .by_name(&path)
+                .map_err(|e| SdError::Other(format!("Failed to open image {path}: {e}")))?;
 
             let mut data = Vec::new();
-            file.read_to_end(&mut data).map_err(|e| {
-                SdError::Other(format!("Failed to read image {path}: {e}"))
-            })?;
+            file.read_to_end(&mut data)
+                .map_err(|e| SdError::Other(format!("Failed to read image {path}: {e}")))?;
 
             // Compute hash
             let mut hasher = Sha256::new();
@@ -395,8 +386,8 @@ mod tests {
 
     /// Creates a minimal test ZIP archive with profile data.
     fn create_test_archive() -> Vec<u8> {
-        use zip::write::SimpleFileOptions;
         use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
 
         let buf = Vec::new();
         let cursor = Cursor::new(buf);
