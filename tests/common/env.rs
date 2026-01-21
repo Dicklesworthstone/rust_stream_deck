@@ -22,7 +22,7 @@ impl<'a> EnvGuard<'a> {
     #[instrument]
     pub fn remove(key: &'a str) -> Self {
         trace!(key, "Removing env var");
-        let guard = lock_env([(key, None)]);
+        let guard = lock_env([(key, None::<&str>)]);
         Self { _guard: guard }
     }
 }

@@ -84,7 +84,8 @@ impl Output for HumanOutput {
             recoverable = error.is_user_recoverable(),
             "Outputting error"
         );
-        let mut content = Text::new("");
+        let mut content = Text::new("\n");
+        content.append("  ");
         content.append_styled(
             "[ERR] ",
             Style::new().bold().color(self.theme.error.clone()),
@@ -92,16 +93,31 @@ impl Output for HumanOutput {
         content.append_styled(&error.to_string(), Style::new().bold());
         content.append("\n");
 
+        if let SdError::MultipleDevices { serials } = error {
+            if !serials.is_empty() {
+                content.append("\n");
+                content.append_styled("  Available devices:\n", self.theme.label.clone());
+                for serial in serials {
+                    content.append_styled(
+                        &format!("    - {serial}\n"),
+                        self.theme.device_serial.clone(),
+                    );
+                }
+            }
+        }
+
         if let Some(suggestion) = error.suggestion() {
             trace!(suggestion, "Adding suggestion");
             content.append("\n");
-            content.append_styled("Suggestion:\n", self.theme.label.clone());
+            content.append_styled("  Suggestion:\n", self.theme.label.clone());
             content.append_styled(
                 &format!("  {suggestion}"),
                 Style::new().color(self.theme.muted.clone()),
             );
             content.append("\n");
         }
+
+        content.append("\n");
 
         let panel = self.error_panel(&content, Some("Error"));
         self.console.print_renderable(&panel);

@@ -221,7 +221,7 @@ fn create_solid_image(path: &Path, width: u32, height: u32, color: [u8; 3]) {
 
 fn create_transparent_image(path: &Path, width: u32, height: u32) {
     let mut img = RgbaImage::new(width, height);
-    for (x, _y, pixel) in img.enumerate_pixels_mut() {
+    for (x, y, pixel) in img.enumerate_pixels_mut() {
         // Checkerboard pattern with varying alpha
         let is_dark = (x / 8 + y / 8) % 2 == 0;
         let alpha = if is_dark { 255 } else { 128 };
