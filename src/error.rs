@@ -66,6 +66,41 @@ pub enum SdError {
 }
 
 impl SdError {
+    /// Returns true if the error is likely related to device connection or transport.
+    #[allow(dead_code)]
+    pub const fn is_connection_error(&self) -> bool {
+        matches!(
+            self,
+            Self::NoDevicesFound
+                | Self::DeviceNotFound { .. }
+                | Self::DeviceOpenFailed { .. }
+                | Self::DeviceCommunication(_)
+        )
+    }
+
+    /// Returns true if the error is related to image handling.
+    #[allow(dead_code)]
+    pub const fn is_image_error(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidImageDimensions { .. }
+                | Self::ImageProcessing(_)
+                | Self::ImageNotFound { .. }
+        )
+    }
+
+    /// Returns true if the error is related to config parsing/availability.
+    #[allow(dead_code)]
+    pub const fn is_config_error(&self) -> bool {
+        matches!(self, Self::ConfigNotFound { .. } | Self::ConfigParse(_))
+    }
+
+    /// Returns true if retrying might resolve the error.
+    #[allow(dead_code)]
+    pub const fn is_retryable(&self) -> bool {
+        self.is_connection_error()
+    }
+
     /// Returns true if the error is recoverable by the user.
     pub const fn is_user_recoverable(&self) -> bool {
         matches!(
@@ -111,5 +146,75 @@ impl<T, E: std::error::Error> ResultExt<T> for std::result::Result<T, E> {
         S: Into<String>,
     {
         self.map_err(|e| SdError::Other(format!("{}: {e}", f().into())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SdError;
+
+    #[test]
+    fn test_connection_error_classification() {
+        assert!(SdError::NoDevicesFound.is_connection_error());
+        assert!(
+            SdError::DeviceNotFound {
+                serial: "abc".to_string()
+            }
+            .is_connection_error()
+        );
+        assert!(
+            SdError::DeviceOpenFailed {
+                serial: "abc".to_string(),
+                reason: "oops".to_string()
+            }
+            .is_connection_error()
+        );
+        assert!(SdError::DeviceCommunication("hid".to_string()).is_connection_error());
+        assert!(!SdError::InvalidBrightness { value: 101 }.is_connection_error());
+    }
+
+    #[test]
+    fn test_image_error_classification() {
+        assert!(
+            SdError::ImageNotFound {
+                path: "/tmp/missing.png".to_string()
+            }
+            .is_image_error()
+        );
+        assert!(SdError::ImageProcessing("bad".to_string()).is_image_error());
+        assert!(
+            SdError::InvalidImageDimensions {
+                expected_w: 72,
+                expected_h: 72,
+                actual_w: 10,
+                actual_h: 10
+            }
+            .is_image_error()
+        );
+        assert!(!SdError::InvalidBrightness { value: 1 }.is_image_error());
+    }
+
+    #[test]
+    fn test_config_error_classification() {
+        assert!(
+            SdError::ConfigNotFound {
+                path: "missing.toml".to_string()
+            }
+            .is_config_error()
+        );
+        assert!(SdError::ConfigParse("bad".to_string()).is_config_error());
+        assert!(
+            !SdError::ImageNotFound {
+                path: "no.png".to_string()
+            }
+            .is_config_error()
+        );
+    }
+
+    #[test]
+    fn test_retryable_matches_connection_errors() {
+        let err = SdError::DeviceCommunication("hid".to_string());
+        assert!(err.is_retryable());
+        assert!(!SdError::InvalidBrightness { value: 100 }.is_retryable());
     }
 }
