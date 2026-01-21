@@ -1,57 +1,66 @@
-//! Device interface wrapping elgato-streamdeck crate.
+//! Real Stream Deck device implementation.
+//!
+//! This module wraps the `elgato-streamdeck` crate to provide
+//! the concrete device implementation.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use elgato_streamdeck::info::Kind;
 use elgato_streamdeck::{StreamDeck, StreamDeckInput};
-use serde::Serialize;
 use tracing::{debug, error, info, trace, warn};
 
+use super::info::{ButtonEvent, ConnectionOptions, DeviceInfo};
+use super::DeviceOperations;
 use crate::error::{Result, SdError};
 
-/// Information about a discovered Stream Deck device.
-#[derive(Debug, Clone, Serialize)]
-pub struct DeviceInfo {
-    pub serial: String,
-    pub product_name: String,
-    pub firmware_version: String,
-    pub key_count: u8,
-    pub key_width: usize,
-    pub key_height: usize,
-    pub rows: u8,
-    pub cols: u8,
-    pub kind: String,
-}
-
-/// Wrapper around the `StreamDeck` providing a simplified interface.
+/// Real Stream Deck device wrapper.
 pub struct Device {
     inner: StreamDeck,
     info: DeviceInfo,
 }
 
-/// Connection retry options for opening devices.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct ConnectionOptions {
-    /// Maximum number of connection attempts (default: 3).
-    pub max_retries: u32,
-    /// Initial delay between retries (default: 1000ms).
-    pub retry_delay: Duration,
-    /// Exponential backoff factor (default: 1.5).
-    pub backoff_factor: f32,
-    /// Maximum delay cap (default: 10000ms).
-    pub max_delay: Duration,
-}
+impl DeviceOperations for Device {
+    fn info(&self) -> &DeviceInfo {
+        &self.info
+    }
 
-impl Default for ConnectionOptions {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            retry_delay: Duration::from_millis(1000),
-            backoff_factor: 1.5,
-            max_delay: Duration::from_millis(10000),
-        }
+    fn is_connected(&self) -> bool {
+        // The elgato-streamdeck crate doesn't expose a direct "is_connected" check,
+        // but we can try a simple operation. For now, assume connected if we have a device.
+        true
+    }
+
+    fn set_brightness(&self, level: u8) -> Result<()> {
+        set_brightness(self, level)
+    }
+
+    fn set_key_image(&self, key: u8, path: &Path) -> Result<()> {
+        set_key_image(self, key, path)
+    }
+
+    fn clear_key(&self, key: u8) -> Result<()> {
+        clear_key(self, key)
+    }
+
+    fn clear_all_keys(&self) -> Result<()> {
+        clear_all_keys(self)
+    }
+
+    fn fill_key_color(&self, key: u8, color: (u8, u8, u8)) -> Result<()> {
+        fill_key_color(self, key, color)
+    }
+
+    fn fill_all_keys_color(&self, color: (u8, u8, u8)) -> Result<()> {
+        fill_all_keys_color(self, color)
+    }
+
+    fn read_button_states(&self) -> Vec<bool> {
+        read_button_states(self)
+    }
+
+    fn watch_buttons(&self, json_output: bool, once: bool, timeout_secs: u64) -> Result<()> {
+        watch_buttons(self, json_output, once, timeout_secs)
     }
 }
 
@@ -380,14 +389,6 @@ pub fn read_button_states(device: &Device) -> Vec<bool> {
             }
         })
         .unwrap_or_else(default)
-}
-
-/// Button press/release event.
-#[derive(Debug, Clone, Serialize)]
-pub struct ButtonEvent {
-    pub key: u8,
-    pub pressed: bool,
-    pub timestamp_ms: u64,
 }
 
 /// Convert device kind to human-readable name.

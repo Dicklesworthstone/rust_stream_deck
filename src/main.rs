@@ -8,6 +8,9 @@ mod cli;
 mod config;
 mod device;
 mod error;
+mod logging;
+mod snapshot;
+mod state;
 
 use std::io::{self, IsTerminal};
 
@@ -46,6 +49,9 @@ mod build_info {
 fn main() {
     let cli = Cli::parse();
 
+    // Initialize structured logging based on CLI flags
+    logging::init_logging(cli.use_json(), cli.verbose, cli.quiet);
+
     // Handle no-color flag or non-TTY
     if cli.no_color || !io::stdout().is_terminal() {
         colored::control::set_override(false);
@@ -73,10 +79,16 @@ fn run(cli: &Cli) -> Result<()> {
         Some(Commands::ClearAll(args)) => cmd_clear_all(cli, args),
         Some(Commands::FillKey(args)) => cmd_fill_key(cli, args),
         Some(Commands::FillAll(args)) => cmd_fill_all(cli, args),
+        Some(Commands::FillKeys(args)) => cmd_fill_keys(cli, args),
+        Some(Commands::ClearKeys(args)) => cmd_clear_keys(cli, args),
         Some(Commands::Watch(args)) => cmd_watch(cli, args),
         Some(Commands::Read(args)) => cmd_read(cli, args),
         Some(Commands::Init(args)) => cmd_init(cli, args),
         Some(Commands::Config(args)) => cmd_config(cli, args),
+        Some(Commands::Save(args)) => cmd_save(cli, args),
+        Some(Commands::Restore(args)) => cmd_restore(cli, args),
+        Some(Commands::Snapshots(args)) => cmd_snapshots(cli, args),
+        Some(Commands::Snapshot(args)) => cmd_snapshot(cli, args),
         Some(Commands::Serve(args)) => cmd_serve(cli, args),
         Some(Commands::Version) => cmd_version(cli),
         Some(Commands::Completions(args)) => cmd_completions(cli, args),
@@ -225,6 +237,24 @@ struct OutputModes {
     compact: &'static str,
 }
 
+// === Device Opening Helper ===
+
+/// Opens a Stream Deck device, using retry logic if enabled via CLI flags.
+fn open_device(cli: &Cli) -> Result<device::Device> {
+    if cli.retry_enabled() {
+        let opts = cli.connection_options();
+        tracing::debug!(
+            retry = opts.max_retries,
+            delay_ms = opts.retry_delay.as_millis(),
+            backoff = opts.backoff_factor,
+            "Opening device with retry"
+        );
+        device::open_device_with_retry(cli.serial.as_deref(), &opts)
+    } else {
+        device::open_device(cli.serial.as_deref())
+    }
+}
+
 // === Command Implementations ===
 
 fn cmd_list(cli: &Cli, args: &cli::ListArgs) -> Result<()> {
@@ -255,7 +285,7 @@ fn cmd_list(cli: &Cli, args: &cli::ListArgs) -> Result<()> {
 }
 
 fn cmd_info(cli: &Cli, _args: &cli::InfoArgs) -> Result<()> {
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
     let info = device::get_device_info(&device);
 
     if cli.use_json() {
@@ -286,8 +316,11 @@ fn cmd_brightness(cli: &Cli, args: &cli::BrightnessArgs) -> Result<()> {
         return Err(SdError::InvalidBrightness { value: args.level });
     }
 
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
     device::set_brightness(&device, args.level)?;
+
+    // Track state change
+    state::record::brightness(args.level);
 
     if cli.use_json() {
         output_json(
@@ -301,8 +334,11 @@ fn cmd_brightness(cli: &Cli, args: &cli::BrightnessArgs) -> Result<()> {
 }
 
 fn cmd_set_key(cli: &Cli, args: &cli::SetKeyArgs) -> Result<()> {
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
     device::set_key_image(&device, args.key, &args.image)?;
+
+    // Track state change
+    state::record::set_key(args.key, args.image.clone());
 
     if cli.use_json() {
         output_json(
@@ -322,7 +358,7 @@ fn cmd_set_key(cli: &Cli, args: &cli::SetKeyArgs) -> Result<()> {
 #[allow(clippy::too_many_lines)] // Batch operations are inherently complex
 fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
     // Open device to get key count
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
     let device_info = device::get_device_info(&device);
 
     // Scan directory for matching files
@@ -386,6 +422,8 @@ fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
         match result {
             Ok(()) => {
                 success_count += 1;
+                // Track state change
+                state::record::set_key(mapping.key, mapping.path.clone());
                 results.push(BatchKeyResult {
                     key: mapping.key,
                     path: mapping.path.display().to_string(),
@@ -542,8 +580,11 @@ fn key_in_range(key: u8, range: &str) -> bool {
 }
 
 fn cmd_clear_key(cli: &Cli, args: &cli::ClearKeyArgs) -> Result<()> {
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
     device::clear_key(&device, args.key)?;
+
+    // Track state change
+    state::record::clear_key(args.key);
 
     if cli.use_json() {
         output_json(
@@ -557,8 +598,12 @@ fn cmd_clear_key(cli: &Cli, args: &cli::ClearKeyArgs) -> Result<()> {
 }
 
 fn cmd_clear_all(cli: &Cli, _args: &cli::ClearAllArgs) -> Result<()> {
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
+    let info = device::get_device_info(&device);
     device::clear_all_keys(&device)?;
+
+    // Track state change
+    state::record::clear_all(info.key_count);
 
     if cli.use_json() {
         output_json(cli, &serde_json::json!({ "cleared": "all", "ok": true }));
@@ -569,9 +614,13 @@ fn cmd_clear_all(cli: &Cli, _args: &cli::ClearAllArgs) -> Result<()> {
 }
 
 fn cmd_fill_key(cli: &Cli, args: &cli::FillKeyArgs) -> Result<()> {
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
     let color = parse_color(&args.color)?;
     device::fill_key_color(&device, args.key, color)?;
+
+    // Track state change
+    let color_str = format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2);
+    state::record::fill_key(args.key, color_str);
 
     if cli.use_json() {
         output_json(
@@ -589,9 +638,16 @@ fn cmd_fill_key(cli: &Cli, args: &cli::FillKeyArgs) -> Result<()> {
 }
 
 fn cmd_fill_all(cli: &Cli, args: &cli::FillAllArgs) -> Result<()> {
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
+    let info = device::get_device_info(&device);
     let color = parse_color(&args.color)?;
     device::fill_all_keys_color(&device, color)?;
+
+    // Track state change for all keys
+    let color_str = format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2);
+    for key in 0..info.key_count {
+        state::record::fill_key(key, color_str.clone());
+    }
 
     if cli.use_json() {
         output_json(
@@ -608,19 +664,438 @@ fn cmd_fill_all(cli: &Cli, args: &cli::FillAllArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
-    let device = device::open_device(cli.serial.as_deref())?;
+fn cmd_fill_keys(cli: &Cli, args: &cli::FillKeysArgs) -> Result<()> {
+    let device = open_device(cli)?;
+    let device_info = device::get_device_info(&device);
+    let color = parse_color(&args.color)?;
+    let color_str = format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2);
 
-    if !cli.quiet && !cli.use_json() {
-        println!("Watching for button presses (Ctrl+C to stop)...");
+    // Determine which keys to fill
+    let keys = resolve_key_selection(
+        args.all,
+        args.range.as_deref(),
+        &args.keys,
+        device_info.key_count,
+    )?;
+
+    if keys.is_empty() {
+        return Err(SdError::Other(
+            "No keys specified. Use --all, --range, or --keys".to_string(),
+        ));
     }
 
-    device::watch_buttons(&device, cli.use_json(), args.once, args.timeout)?;
+    // Fill keys with color
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    for key in &keys {
+        match device::fill_key_color(&device, *key, color) {
+            Ok(()) => {
+                success_count += 1;
+                // Track state change
+                state::record::fill_key(*key, color_str.clone());
+                results.push(serde_json::json!({
+                    "key": key,
+                    "status": "filled"
+                }));
+                if !cli.quiet && !cli.use_json() {
+                    println!("Key {key}: filled with {color_str}");
+                }
+            }
+            Err(e) => {
+                error_count += 1;
+                results.push(serde_json::json!({
+                    "key": key,
+                    "status": "failed",
+                    "error": e.to_string()
+                }));
+
+                if args.continue_on_error {
+                    if !cli.quiet && !cli.use_json() {
+                        eprintln!("Key {key} failed: {e}");
+                    }
+                } else {
+                    if cli.use_json() {
+                        output_json(
+                            cli,
+                            &serde_json::json!({
+                                "command": "fill-keys",
+                                "color": color_str,
+                                "ok": false,
+                                "results": results,
+                                "summary": {
+                                    "total": keys.len(),
+                                    "filled": success_count,
+                                    "failed": error_count,
+                                }
+                            }),
+                        );
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    if cli.use_json() {
+        output_json(
+            cli,
+            &serde_json::json!({
+                "command": "fill-keys",
+                "color": color_str,
+                "ok": error_count == 0,
+                "results": results,
+                "summary": {
+                    "total": keys.len(),
+                    "filled": success_count,
+                    "failed": error_count,
+                }
+            }),
+        );
+    } else if !cli.quiet {
+        println!("Filled {success_count} keys with {color_str} ({error_count} errors)");
+    }
+
     Ok(())
 }
 
+fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
+    let device = open_device(cli)?;
+    let device_info = device::get_device_info(&device);
+
+    // Determine which keys to clear
+    let keys = resolve_key_selection(
+        args.all,
+        args.range.as_deref(),
+        &args.keys,
+        device_info.key_count,
+    )?;
+
+    if keys.is_empty() {
+        return Err(SdError::Other(
+            "No keys specified. Use --all, --range, or --keys".to_string(),
+        ));
+    }
+
+    // If --all is specified, use the optimized clear_all function
+    if args.all {
+        device::clear_all_keys(&device)?;
+        // Track state change
+        state::record::clear_all(device_info.key_count);
+        if cli.use_json() {
+            output_json(
+                cli,
+                &serde_json::json!({
+                    "command": "clear-keys",
+                    "ok": true,
+                    "cleared": "all",
+                    "summary": {
+                        "total": device_info.key_count,
+                        "cleared": device_info.key_count,
+                        "failed": 0,
+                    }
+                }),
+            );
+        } else if !cli.quiet {
+            println!("Cleared all {} keys", device_info.key_count);
+        }
+        return Ok(());
+    }
+
+    // Clear individual keys
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    for key in &keys {
+        match device::clear_key(&device, *key) {
+            Ok(()) => {
+                success_count += 1;
+                // Track state change
+                state::record::clear_key(*key);
+                results.push(serde_json::json!({
+                    "key": key,
+                    "status": "cleared"
+                }));
+                if !cli.quiet && !cli.use_json() {
+                    println!("Key {key}: cleared");
+                }
+            }
+            Err(e) => {
+                error_count += 1;
+                results.push(serde_json::json!({
+                    "key": key,
+                    "status": "failed",
+                    "error": e.to_string()
+                }));
+
+                if args.continue_on_error {
+                    if !cli.quiet && !cli.use_json() {
+                        eprintln!("Key {key} failed: {e}");
+                    }
+                } else {
+                    if cli.use_json() {
+                        output_json(
+                            cli,
+                            &serde_json::json!({
+                                "command": "clear-keys",
+                                "ok": false,
+                                "results": results,
+                                "summary": {
+                                    "total": keys.len(),
+                                    "cleared": success_count,
+                                    "failed": error_count,
+                                }
+                            }),
+                        );
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    if cli.use_json() {
+        output_json(
+            cli,
+            &serde_json::json!({
+                "command": "clear-keys",
+                "ok": error_count == 0,
+                "results": results,
+                "summary": {
+                    "total": keys.len(),
+                    "cleared": success_count,
+                    "failed": error_count,
+                }
+            }),
+        );
+    } else if !cli.quiet {
+        println!("Cleared {success_count} keys ({error_count} errors)");
+    }
+
+    Ok(())
+}
+
+/// Resolves key selection from --all, --range, or --keys options.
+fn resolve_key_selection(
+    all: bool,
+    range: Option<&str>,
+    keys: &[u8],
+    key_count: u8,
+) -> Result<Vec<u8>> {
+    if all {
+        return Ok((0..key_count).collect());
+    }
+
+    if let Some(range_str) = range {
+        return parse_key_range(range_str, key_count);
+    }
+
+    if !keys.is_empty() {
+        // Validate all keys are in range
+        for key in keys {
+            if *key >= key_count {
+                return Err(SdError::InvalidKeyIndex {
+                    index: *key,
+                    max: key_count,
+                    max_idx: key_count - 1,
+                });
+            }
+        }
+        return Ok(keys.to_vec());
+    }
+
+    Ok(vec![])
+}
+
+/// Parses a key range string like "0-7" into a vector of key indices.
+fn parse_key_range(range: &str, key_count: u8) -> Result<Vec<u8>> {
+    let parts: Vec<&str> = range.split('-').collect();
+    if parts.len() != 2 {
+        return Err(SdError::Other(format!(
+            "Invalid range format '{range}': expected START-END (e.g., 0-7)"
+        )));
+    }
+
+    let start: u8 = parts[0].parse().map_err(|_| {
+        SdError::Other(format!("Invalid range start '{}': not a number", parts[0]))
+    })?;
+
+    let end: u8 = parts[1].parse().map_err(|_| {
+        SdError::Other(format!("Invalid range end '{}': not a number", parts[1]))
+    })?;
+
+    if start > end {
+        return Err(SdError::Other(format!(
+            "Invalid range '{range}': start ({start}) must be <= end ({end})"
+        )));
+    }
+
+    if end >= key_count {
+        return Err(SdError::InvalidKeyIndex {
+            index: end,
+            max: key_count,
+            max_idx: key_count - 1,
+        });
+    }
+
+    Ok((start..=end).collect())
+}
+
+/// Maximum backoff delay for reconnection (30 seconds).
+const MAX_RECONNECT_DELAY_MS: u64 = 30_000;
+/// Backoff multiplier for exponential backoff.
+const RECONNECT_BACKOFF_FACTOR: f64 = 1.5;
+
+fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
+    let mut device = open_device(cli)?;
+    let serial = cli.serial.clone();
+
+    if !cli.quiet && !cli.use_json() {
+        println!("Watching for button presses (Ctrl+C to stop)...");
+        if args.reconnect {
+            println!("Auto-reconnect enabled");
+        }
+    }
+
+    // Track reconnection state
+    let mut reconnect_attempts: u32 = 0;
+    let mut reconnect_delay = args.reconnect_delay;
+
+    loop {
+        // Try to watch for events
+        let result = device::watch_buttons(&device, cli.use_json(), args.once, args.timeout);
+
+        match result {
+            Ok(()) => {
+                // Normal exit (timeout, --once, or clean shutdown)
+                return Ok(());
+            }
+            Err(ref e) if e.is_connection_error() && args.reconnect => {
+                reconnect_attempts += 1;
+
+                // Check max attempts (0 = unlimited)
+                if args.max_reconnect_attempts > 0 && reconnect_attempts > args.max_reconnect_attempts {
+                    // Emit final disconnect event
+                    emit_watch_event(cli, WatchConnectionEvent::Disconnected {
+                        reason: e.to_string(),
+                        reconnecting: false,
+                    });
+
+                    if !cli.quiet && !cli.use_json() {
+                        eprintln!(
+                            "Max reconnection attempts ({}) exceeded",
+                            args.max_reconnect_attempts
+                        );
+                    }
+                    return Err(SdError::Other(format!(
+                        "Connection lost after {} reconnection attempts: {}",
+                        reconnect_attempts - 1,
+                        e
+                    )));
+                }
+
+                // Emit disconnect event
+                emit_watch_event(cli, WatchConnectionEvent::Disconnected {
+                    reason: e.to_string(),
+                    reconnecting: true,
+                });
+
+                if !cli.quiet && !cli.use_json() {
+                    eprintln!(
+                        "Connection lost ({}), reconnecting in {}ms (attempt {}{})...",
+                        e,
+                        reconnect_delay,
+                        reconnect_attempts,
+                        if args.max_reconnect_attempts > 0 {
+                            format!("/{}", args.max_reconnect_attempts)
+                        } else {
+                            String::new()
+                        }
+                    );
+                }
+
+                // Emit reconnecting event
+                emit_watch_event(cli, WatchConnectionEvent::Reconnecting {
+                    attempt: reconnect_attempts,
+                    delay_ms: reconnect_delay,
+                });
+
+                // Wait before reconnecting
+                std::thread::sleep(std::time::Duration::from_millis(reconnect_delay));
+
+                // Try to reconnect
+                match device::open_device(serial.as_deref()) {
+                    Ok(new_device) => {
+                        device = new_device;
+
+                        // Emit reconnected event
+                        emit_watch_event(cli, WatchConnectionEvent::Reconnected {
+                            attempt: reconnect_attempts,
+                        });
+
+                        if !cli.quiet && !cli.use_json() {
+                            println!("Reconnected successfully");
+                        }
+
+                        // Reset backoff on successful connection
+                        reconnect_delay = args.reconnect_delay;
+                        reconnect_attempts = 0;
+                    }
+                    Err(conn_err) => {
+                        tracing::debug!(error = %conn_err, "Reconnection attempt failed");
+
+                        // Increase backoff with cap
+                        #[allow(clippy::cast_possible_truncation)]
+                        #[allow(clippy::cast_sign_loss)]
+                        {
+                            reconnect_delay = ((reconnect_delay as f64 * RECONNECT_BACKOFF_FACTOR) as u64)
+                                .min(MAX_RECONNECT_DELAY_MS);
+                        }
+                        // Continue loop to try again
+                    }
+                }
+            }
+            Err(e) => {
+                // Non-connection error or reconnect disabled
+                return Err(e);
+            }
+        }
+    }
+}
+
+/// Connection events emitted during watch with reconnect.
+#[derive(Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum WatchConnectionEvent {
+    Disconnected {
+        reason: String,
+        reconnecting: bool,
+    },
+    Reconnecting {
+        attempt: u32,
+        delay_ms: u64,
+    },
+    Reconnected {
+        attempt: u32,
+    },
+}
+
+/// Emits a watch connection event in robot mode.
+fn emit_watch_event(cli: &Cli, event: WatchConnectionEvent) {
+    if cli.use_json() {
+        let json = if cli.use_compact_json() {
+            serde_json::to_string(&event).unwrap_or_default()
+        } else {
+            serde_json::to_string_pretty(&event).unwrap_or_default()
+        };
+        println!("{json}");
+    }
+}
+
 fn cmd_read(cli: &Cli, _args: &cli::ReadArgs) -> Result<()> {
-    let device = device::open_device(cli.serial.as_deref())?;
+    let device = open_device(cli)?;
     let states = device::read_button_states(&device);
 
     if cli.use_json() {
@@ -654,6 +1129,473 @@ fn cmd_config(cli: &Cli, args: &cli::ConfigArgs) -> Result<()> {
     let _ = (cli, args); // TODO: implement
     eprintln!("Config show not yet implemented");
     Ok(())
+}
+
+// === Snapshot Commands ===
+
+fn cmd_save(cli: &Cli, args: &cli::SaveArgs) -> Result<()> {
+    // Validate snapshot name
+    if !is_valid_snapshot_name(&args.name) {
+        return Err(SdError::Other(
+            "Snapshot name must be 1-64 characters, alphanumeric with hyphens/underscores".to_string(),
+        ));
+    }
+
+    // Get device info for snapshot metadata
+    let device = open_device(cli)?;
+    let device_info = device::get_device_info(&device);
+
+    // Open snapshot database
+    let mut db = snapshot::SnapshotDb::open_default()?;
+
+    // Check for existing snapshot
+    if db.snapshot_exists(&args.name)? && !args.force {
+        return Err(SdError::Other(format!(
+            "Snapshot '{}' already exists. Use --force to overwrite.",
+            args.name
+        )));
+    }
+
+    // Get current session state
+    let session = state::session_state();
+
+    // Build keys list from session state
+    let mut keys = Vec::new();
+    let key_indices: Vec<u8> = if args.session_only {
+        // Only keys modified in this session
+        session.keys.keys().copied().collect()
+    } else {
+        // All keys from session (we can only save what we've tracked)
+        session.keys.keys().copied().collect()
+    };
+
+    for key_index in key_indices {
+        if let Some(session_key) = session.keys.get(&key_index) {
+            let key_state = match session_key {
+                state::KeyState::Image { path } => {
+                    // Hash the image for content-addressable storage
+                    let hash = hash_image_file(path)?;
+                    // Cache the image
+                    cache_image(&db, &hash, path)?;
+                    snapshot::KeyState::Image {
+                        source_path: Some(path.clone()),
+                        image_hash: hash,
+                    }
+                }
+                state::KeyState::Color { hex } => snapshot::KeyState::Color { hex: hex.clone() },
+                state::KeyState::Cleared => snapshot::KeyState::Clear,
+            };
+            keys.push(snapshot::SnapshotKey {
+                key_index,
+                state: key_state,
+            });
+        }
+    }
+
+    // Get brightness from session or None
+    let brightness = if args.no_brightness {
+        None
+    } else {
+        session.brightness
+    };
+
+    // Create snapshot
+    let mut snap = snapshot::Snapshot::new(
+        args.name.clone(),
+        device_info.product_name.clone(),
+        device_info.key_count,
+        device_info.key_width as u32,
+        device_info.key_height as u32,
+    );
+    snap.brightness = brightness;
+    snap.description = args.description.clone();
+    snap.device_serial = Some(device_info.serial.clone());
+    snap.keys = keys;
+
+    // Save to database
+    let id = db.save_snapshot(&snap)?;
+
+    // Output result
+    if cli.use_json() {
+        output_json(
+            cli,
+            &serde_json::json!({
+                "command": "save",
+                "ok": true,
+                "snapshot": {
+                    "id": id,
+                    "name": args.name,
+                    "device_model": device_info.product_name,
+                    "key_count": device_info.key_count,
+                    "brightness": brightness,
+                    "keys_saved": snap.keys.len(),
+                }
+            }),
+        );
+    } else if !cli.quiet {
+        println!(
+            "Saved snapshot '{}' ({} keys{})",
+            args.name,
+            snap.keys.len(),
+            brightness.map_or(String::new(), |b| format!(", brightness {b}%"))
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_restore(cli: &Cli, args: &cli::RestoreArgs) -> Result<()> {
+    // Open snapshot database
+    let db = snapshot::SnapshotDb::open_default()?;
+
+    // Load snapshot
+    let snap = db.load_snapshot(&args.name)?.ok_or_else(|| {
+        SdError::Other(format!("Snapshot '{}' not found", args.name))
+    })?;
+
+    // Open device
+    let device = open_device(cli)?;
+    let device_info = device::get_device_info(&device);
+
+    // Check device compatibility
+    if snap.key_count != device_info.key_count {
+        return Err(SdError::Other(format!(
+            "Snapshot was saved for {} keys, but device has {} keys",
+            snap.key_count, device_info.key_count
+        )));
+    }
+
+    // Apply brightness if present and not skipped
+    if !args.no_brightness {
+        if let Some(brightness) = snap.brightness {
+            device::set_brightness(&device, brightness)?;
+            state::record::brightness(brightness);
+        }
+    }
+
+    // Apply keys
+    let mut applied_count = 0;
+    let mut error_count = 0;
+
+    for key in &snap.keys {
+        let result = match &key.state {
+            snapshot::KeyState::Image { source_path, image_hash } => {
+                // Try to load from cache first, then source path
+                apply_cached_image(&device, key.key_index, image_hash, source_path.as_ref())
+            }
+            snapshot::KeyState::Color { hex } => {
+                let color = parse_color(hex)?;
+                device::fill_key_color(&device, key.key_index, color).map(|()| {
+                    state::record::fill_key(key.key_index, hex.clone());
+                })
+            }
+            snapshot::KeyState::Clear => {
+                device::clear_key(&device, key.key_index).map(|()| {
+                    state::record::clear_key(key.key_index);
+                })
+            }
+        };
+
+        match result {
+            Ok(()) => applied_count += 1,
+            Err(e) => {
+                error_count += 1;
+                tracing::warn!(key = key.key_index, error = %e, "Failed to restore key");
+            }
+        }
+    }
+
+    // Output result
+    if cli.use_json() {
+        output_json(
+            cli,
+            &serde_json::json!({
+                "command": "restore",
+                "ok": error_count == 0,
+                "snapshot": args.name,
+                "keys_applied": applied_count,
+                "keys_failed": error_count,
+                "brightness_applied": !args.no_brightness && snap.brightness.is_some(),
+            }),
+        );
+    } else if !cli.quiet {
+        if error_count == 0 {
+            println!(
+                "Restored snapshot '{}' ({} keys)",
+                args.name, applied_count
+            );
+        } else {
+            println!(
+                "Restored snapshot '{}' ({} keys, {} failed)",
+                args.name, applied_count, error_count
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_snapshots(cli: &Cli, args: &cli::SnapshotsArgs) -> Result<()> {
+    // Open snapshot database
+    let db = snapshot::SnapshotDb::open_default()?;
+
+    // List snapshots
+    let snapshots = db.list_snapshots()?;
+
+    if cli.use_json() {
+        output_json(cli, &snapshots);
+    } else if snapshots.is_empty() {
+        println!("No snapshots saved");
+        println!("Use 'sd save <name>' to save the current device state");
+    } else {
+        for snap in &snapshots {
+            if args.long {
+                println!(
+                    "{}: {} ({} keys{})",
+                    snap.name.green(),
+                    snap.device_model,
+                    snap.key_count,
+                    snap.brightness
+                        .map_or(String::new(), |b| format!(", {b}% brightness"))
+                );
+                if let Some(ref desc) = snap.description {
+                    println!("  {}", desc.dimmed());
+                }
+                println!(
+                    "  Created: {}",
+                    snap.created_at.format("%Y-%m-%d %H:%M")
+                );
+            } else {
+                println!("{}", snap.name);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_snapshot(cli: &Cli, args: &cli::SnapshotCommand) -> Result<()> {
+    match &args.command {
+        cli::SnapshotSubcommand::Show(show_args) => cmd_snapshot_show(cli, show_args),
+        cli::SnapshotSubcommand::Delete(delete_args) => cmd_snapshot_delete(cli, delete_args),
+    }
+}
+
+fn cmd_snapshot_show(cli: &Cli, args: &cli::SnapshotShowArgs) -> Result<()> {
+    // Open snapshot database
+    let db = snapshot::SnapshotDb::open_default()?;
+
+    // Load snapshot
+    let snap = db.load_snapshot(&args.name)?.ok_or_else(|| {
+        SdError::Other(format!("Snapshot '{}' not found", args.name))
+    })?;
+
+    if cli.use_json() {
+        output_json(cli, &snap);
+    } else {
+        println!("{}", "Snapshot Details".bold().underline());
+        println!();
+        println!("{}: {}", "Name".bold(), snap.name);
+        if let Some(ref desc) = snap.description {
+            println!("{}: {}", "Description".bold(), desc);
+        }
+        println!("{}: {}", "Device".bold(), snap.device_model);
+        if let Some(ref serial) = snap.device_serial {
+            println!("{}: {}", "Serial".bold(), serial);
+        }
+        println!(
+            "{}: {} ({}x{} px)",
+            "Keys".bold(),
+            snap.key_count,
+            snap.key_width,
+            snap.key_height
+        );
+        if let Some(brightness) = snap.brightness {
+            println!("{}: {}%", "Brightness".bold(), brightness);
+        }
+        println!(
+            "{}: {}",
+            "Created".bold(),
+            snap.created_at.format("%Y-%m-%d %H:%M:%S")
+        );
+        println!(
+            "{}: {}",
+            "Updated".bold(),
+            snap.updated_at.format("%Y-%m-%d %H:%M:%S")
+        );
+
+        if !snap.keys.is_empty() {
+            println!();
+            println!("{}", "Keys:".bold());
+            for key in &snap.keys {
+                let state_desc = match &key.state {
+                    snapshot::KeyState::Image { source_path, image_hash } => {
+                        let path_str = source_path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "(cached)".to_string());
+                        format!("image: {} [{}...]", path_str, &image_hash[..8.min(image_hash.len())])
+                    }
+                    snapshot::KeyState::Color { hex } => format!("color: {hex}"),
+                    snapshot::KeyState::Clear => "cleared".to_string(),
+                };
+                println!("  Key {}: {}", key.key_index, state_desc);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_snapshot_delete(cli: &Cli, args: &cli::SnapshotDeleteArgs) -> Result<()> {
+    // Open snapshot database
+    let mut db = snapshot::SnapshotDb::open_default()?;
+
+    // Check if snapshot exists
+    if !db.snapshot_exists(&args.name)? {
+        return Err(SdError::Other(format!(
+            "Snapshot '{}' not found",
+            args.name
+        )));
+    }
+
+    // Confirm deletion if not forced and not in robot mode
+    if !args.force && !cli.use_json() {
+        println!(
+            "{}",
+            format!("Delete snapshot '{}'? This cannot be undone.", args.name).yellow()
+        );
+        println!("Use --force to skip this prompt");
+        return Ok(());
+    }
+
+    // Delete snapshot
+    let deleted = db.delete_snapshot(&args.name)?;
+
+    if cli.use_json() {
+        output_json(
+            cli,
+            &serde_json::json!({
+                "command": "snapshot delete",
+                "ok": deleted,
+                "name": args.name,
+                "deleted": deleted,
+            }),
+        );
+    } else if !cli.quiet {
+        if deleted {
+            println!("Deleted snapshot '{}'", args.name);
+        } else {
+            println!("Snapshot '{}' not found", args.name);
+        }
+    }
+
+    // Cleanup orphaned images
+    let cleaned = db.cleanup_orphaned_images()?;
+    if cleaned > 0 && !cli.quiet && !cli.use_json() {
+        println!("Cleaned up {} orphaned cached images", cleaned);
+    }
+
+    Ok(())
+}
+
+/// Validates a snapshot name.
+fn is_valid_snapshot_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Computes SHA256 hash of an image file.
+fn hash_image_file(path: &std::path::Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    let data = std::fs::read(path).map_err(|e| {
+        SdError::Other(format!("Failed to read image {}: {e}", path.display()))
+    })?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    let result = hasher.finalize();
+    Ok(hex::encode(result))
+}
+
+/// Caches an image to content-addressable storage.
+fn cache_image(
+    db: &snapshot::SnapshotDb,
+    hash: &str,
+    source_path: &std::path::Path,
+) -> Result<()> {
+    // Get cache path
+    let cache_path = snapshot::image_cache_path(hash)?;
+
+    // Skip if already cached
+    if cache_path.exists() {
+        return Ok(());
+    }
+
+    // Create cache directory
+    if let Some(parent) = cache_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            SdError::Other(format!("Failed to create cache directory: {e}"))
+        })?;
+    }
+
+    // Copy image to cache (could convert to webp in future)
+    std::fs::copy(source_path, &cache_path).map_err(|e| {
+        SdError::Other(format!("Failed to cache image: {e}"))
+    })?;
+
+    // Get file metadata for DB entry
+    let metadata = std::fs::metadata(&cache_path).map_err(|e| {
+        SdError::Other(format!("Failed to get cached image metadata: {e}"))
+    })?;
+
+    // Save to database
+    let cached = snapshot::CachedImage::new(
+        hash.to_string(),
+        Some(source_path.to_path_buf()),
+        0, // Width/height could be extracted from image
+        0,
+        "png".to_string(), // Format detection could be added
+        metadata.len(),
+    );
+    db.save_image(&cached)?;
+
+    Ok(())
+}
+
+/// Applies a cached image to a key.
+fn apply_cached_image(
+    device: &device::Device,
+    key: u8,
+    hash: &str,
+    source_path: Option<&std::path::PathBuf>,
+) -> Result<()> {
+    // Try cache first
+    let cache_path = snapshot::image_cache_path(hash)?;
+    if cache_path.exists() {
+        device::set_key_image(device, key, &cache_path)?;
+        if let Some(path) = source_path {
+            state::record::set_key(key, path.clone());
+        }
+        return Ok(());
+    }
+
+    // Fall back to source path
+    if let Some(path) = source_path {
+        if path.exists() {
+            device::set_key_image(device, key, path)?;
+            state::record::set_key(key, path.clone());
+            return Ok(());
+        }
+    }
+
+    Err(SdError::Other(format!(
+        "Image not found in cache or at original path (hash: {hash})"
+    )))
 }
 
 #[allow(clippy::unnecessary_wraps)] // Will return errors when implemented

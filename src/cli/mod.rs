@@ -1,7 +1,9 @@
 //! CLI argument definitions and command dispatch.
 
-use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+use std::time::Duration;
+
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Stream Deck CLI - Cross-platform control for Elgato Stream Deck devices.
 ///
@@ -25,9 +27,9 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub robot: bool,
 
-    /// Verbose output (show debug information)
-    #[arg(long, short = 'v', global = true)]
-    pub verbose: bool,
+    /// Verbose output (-v = debug, -vv = trace)
+    #[arg(long, short = 'v', global = true, action = clap::ArgAction::Count)]
+    pub verbose: u8,
 
     /// Quiet mode (suppress non-essential output)
     #[arg(long, short = 'q', global = true)]
@@ -40,6 +42,22 @@ pub struct Cli {
     /// Target device by serial number (required if multiple devices connected)
     #[arg(long, short = 's', global = true, env = "SD_SERIAL")]
     pub serial: Option<String>,
+
+    /// Retry N times on connection failure (default: 0 = no retry)
+    #[arg(long, global = true, default_value = "0", env = "SD_RETRY")]
+    pub retry: u32,
+
+    /// Initial delay between retries in milliseconds (default: 1000)
+    #[arg(long, global = true, default_value = "1000", env = "SD_RETRY_DELAY")]
+    pub retry_delay: u64,
+
+    /// Maximum delay cap for exponential backoff in milliseconds (default: 10000)
+    #[arg(long, global = true, default_value = "10000", env = "SD_RETRY_MAX_DELAY")]
+    pub retry_max_delay: u64,
+
+    /// Backoff multiplier for retry delay (default: 1.5)
+    #[arg(long, global = true, default_value = "1.5", env = "SD_RETRY_BACKOFF")]
+    pub retry_backoff: f32,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -67,7 +85,39 @@ impl Cli {
     pub const fn use_compact_json(&self) -> bool {
         matches!(self.format, OutputFormat::JsonCompact)
     }
+
+    /// Returns true if retry is enabled.
+    pub const fn retry_enabled(&self) -> bool {
+        self.retry > 0
+    }
+
+    /// Build connection options from CLI flags.
+    ///
+    /// When retry is 0, returns options for a single attempt.
+    /// When retry > 0, returns options for N retries with exponential backoff.
+    #[must_use]
+    pub fn connection_options(&self) -> ConnectionOptions {
+        if self.retry == 0 {
+            // No retry - single attempt
+            ConnectionOptions {
+                max_retries: 1,
+                retry_delay: Duration::ZERO,
+                backoff_factor: 1.0,
+                max_delay: Duration::ZERO,
+            }
+        } else {
+            ConnectionOptions {
+                max_retries: self.retry,
+                retry_delay: Duration::from_millis(self.retry_delay),
+                backoff_factor: self.retry_backoff,
+                max_delay: Duration::from_millis(self.retry_max_delay),
+            }
+        }
+    }
 }
+
+/// Re-export ConnectionOptions from device module for convenience.
+pub use crate::device::ConnectionOptions;
 
 /// Available commands.
 #[derive(Subcommand, Debug)]
@@ -102,6 +152,12 @@ pub enum Commands {
     /// Fill all keys with a solid color
     FillAll(FillAllArgs),
 
+    /// Fill multiple specific keys with a solid color
+    FillKeys(FillKeysArgs),
+
+    /// Clear multiple specific keys (set to black)
+    ClearKeys(ClearKeysArgs),
+
     // === Input Monitoring ===
     /// Watch for button presses (streams events)
     Watch(WatchArgs),
@@ -115,6 +171,19 @@ pub enum Commands {
 
     /// Show current configuration
     Config(ConfigArgs),
+
+    // === Snapshots ===
+    /// Save current device state as a named snapshot
+    Save(SaveArgs),
+
+    /// Restore a saved snapshot to the device
+    Restore(RestoreArgs),
+
+    /// List all saved snapshots
+    Snapshots(SnapshotsArgs),
+
+    /// Manage snapshots (show, delete)
+    Snapshot(SnapshotCommand),
 
     // === Web Interface ===
     /// Start local web server for GUI control
@@ -256,6 +325,99 @@ pub struct FillAllArgs {
     pub color: String,
 }
 
+/// Arguments for batch fill-keys command.
+///
+/// Fill multiple keys with a solid color in one operation.
+///
+/// # Examples
+///
+/// ```bash
+/// # Fill all keys with red
+/// sd fill-keys ff0000 --all
+///
+/// # Fill first row (keys 0-7)
+/// sd fill-keys 00ff00 --range 0-7
+///
+/// # Fill specific keys
+/// sd fill-keys 0000ff --keys 0 5 10 15
+/// ```
+#[derive(Parser, Debug)]
+pub struct FillKeysArgs {
+    /// Color in hex format (e.g., "ff0000" for red, "#00ff00" for green)
+    pub color: String,
+
+    /// Fill ALL keys on the device
+    #[arg(long, conflicts_with_all = ["range", "keys"])]
+    pub all: bool,
+
+    /// Range of keys to fill (e.g., "0-7" for first row)
+    #[arg(long, short = 'r')]
+    pub range: Option<String>,
+
+    /// Specific key indices to fill (space-separated)
+    #[arg(long, short = 'k', num_args = 1..)]
+    pub keys: Vec<u8>,
+
+    /// Continue filling other keys if one fails
+    #[arg(long, short = 'c')]
+    pub continue_on_error: bool,
+}
+
+/// Arguments for batch clear-keys command.
+///
+/// Clear multiple keys (set to black) in one operation.
+///
+/// # Examples
+///
+/// ```bash
+/// # Clear all keys
+/// sd clear-keys --all
+///
+/// # Clear first row (keys 0-7)
+/// sd clear-keys --range 0-7
+///
+/// # Clear specific keys
+/// sd clear-keys --keys 0 5 10 15
+/// ```
+#[derive(Parser, Debug)]
+pub struct ClearKeysArgs {
+    /// Clear ALL keys on the device (same as clear-all)
+    #[arg(long, conflicts_with_all = ["range", "keys"])]
+    pub all: bool,
+
+    /// Range of keys to clear (e.g., "0-7" for first row)
+    #[arg(long, short = 'r')]
+    pub range: Option<String>,
+
+    /// Specific key indices to clear (space-separated)
+    #[arg(long, short = 'k', num_args = 1..)]
+    pub keys: Vec<u8>,
+
+    /// Continue clearing other keys if one fails
+    #[arg(long, short = 'c')]
+    pub continue_on_error: bool,
+}
+
+/// Arguments for the watch command.
+///
+/// # Examples
+///
+/// ```bash
+/// # Watch for button presses
+/// sd watch
+///
+/// # Exit after first press
+/// sd watch --once
+///
+/// # Auto-reconnect on disconnect
+/// sd watch --reconnect
+///
+/// # Custom reconnect delay (2 seconds)
+/// sd watch --reconnect --reconnect-delay 2000
+///
+/// # Limit reconnection attempts
+/// sd watch --reconnect --max-reconnect-attempts 5
+/// ```
 #[derive(Parser, Debug)]
 pub struct WatchArgs {
     /// Exit after first button press
@@ -265,6 +427,18 @@ pub struct WatchArgs {
     /// Timeout in seconds (0 = no timeout)
     #[arg(long, short = 't', default_value = "0")]
     pub timeout: u64,
+
+    /// Automatically reconnect on device disconnect
+    #[arg(long)]
+    pub reconnect: bool,
+
+    /// Initial delay between reconnection attempts in milliseconds (default: 1000)
+    #[arg(long, default_value = "1000")]
+    pub reconnect_delay: u64,
+
+    /// Maximum number of reconnection attempts (0 = unlimited)
+    #[arg(long, default_value = "0")]
+    pub max_reconnect_attempts: u32,
 }
 
 #[derive(Parser, Debug)]
@@ -273,7 +447,7 @@ pub struct ReadArgs {}
 #[derive(Parser, Debug)]
 pub struct InitArgs {
     /// Force overwrite existing configuration
-    #[arg(long, short = 'f')]
+    #[arg(long)]
     pub force: bool,
 }
 
@@ -282,6 +456,136 @@ pub struct ConfigArgs {
     /// Show configuration file path
     #[arg(long)]
     pub path: bool,
+}
+
+/// Arguments for the save command.
+///
+/// # Examples
+///
+/// ```bash
+/// # Save current state with a name
+/// sd save work-mode
+///
+/// # Save with description
+/// sd save gaming-mode -d "OBS and Discord shortcuts"
+///
+/// # Overwrite existing snapshot
+/// sd save work-mode --force
+///
+/// # Save only keys modified in this session
+/// sd save quick-save --session-only
+/// ```
+#[derive(Parser, Debug)]
+pub struct SaveArgs {
+    /// Name for the snapshot (alphanumeric, hyphens, underscores)
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Description for the snapshot
+    #[arg(long, short = 'd')]
+    pub description: Option<String>,
+
+    /// Overwrite existing snapshot without prompting
+    #[arg(long)]
+    pub force: bool,
+
+    /// Save only keys modified in this session
+    #[arg(long)]
+    pub session_only: bool,
+
+    /// Exclude brightness from snapshot
+    #[arg(long)]
+    pub no_brightness: bool,
+}
+
+/// Arguments for the restore command.
+///
+/// # Examples
+///
+/// ```bash
+/// # Restore a saved snapshot
+/// sd restore work-mode
+///
+/// # Restore without applying brightness
+/// sd restore gaming-mode --no-brightness
+/// ```
+#[derive(Parser, Debug)]
+pub struct RestoreArgs {
+    /// Name of the snapshot to restore
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Skip brightness when restoring
+    #[arg(long)]
+    pub no_brightness: bool,
+}
+
+/// Arguments for the snapshots list command.
+///
+/// # Examples
+///
+/// ```bash
+/// # List all snapshots
+/// sd snapshots
+///
+/// # Show detailed info
+/// sd snapshots --long
+/// ```
+#[derive(Parser, Debug)]
+pub struct SnapshotsArgs {
+    /// Show detailed snapshot information
+    #[arg(long, short = 'l')]
+    pub long: bool,
+}
+
+/// Snapshot management subcommands.
+///
+/// # Examples
+///
+/// ```bash
+/// # Show snapshot details
+/// sd snapshot show work-mode
+///
+/// # Delete a snapshot
+/// sd snapshot delete old-layout
+///
+/// # Force delete without confirmation
+/// sd snapshot delete old-layout --force
+/// ```
+#[derive(Parser, Debug)]
+pub struct SnapshotCommand {
+    #[command(subcommand)]
+    pub command: SnapshotSubcommand,
+}
+
+/// Snapshot subcommands.
+#[derive(Subcommand, Debug)]
+pub enum SnapshotSubcommand {
+    /// Show detailed information about a snapshot
+    Show(SnapshotShowArgs),
+
+    /// Delete a snapshot
+    Delete(SnapshotDeleteArgs),
+}
+
+/// Arguments for snapshot show command.
+#[derive(Parser, Debug)]
+pub struct SnapshotShowArgs {
+    /// Name of the snapshot to show
+    #[arg(value_name = "NAME")]
+    pub name: String,
+}
+
+/// Arguments for snapshot delete command.
+#[derive(Parser, Debug)]
+pub struct SnapshotDeleteArgs {
+    /// Name of the snapshot to delete
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Delete without confirmation prompt
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Parser, Debug)]
