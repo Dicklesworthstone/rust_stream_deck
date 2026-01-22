@@ -584,7 +584,14 @@ mod continue_on_error {
         let dir = TestDir::new();
 
         // Test with pattern and continue-on-error
-        let result = cli.run(&["set-keys", dir.path_str(), "--continue-on-error", "--pattern", "key-{index}.png", "--help"]);
+        let result = cli.run(&[
+            "set-keys",
+            dir.path_str(),
+            "--continue-on-error",
+            "--pattern",
+            "key-{index}.png",
+            "--help",
+        ]);
         result.assert_success();
     }
 }
@@ -600,27 +607,21 @@ mod range_parsing {
     fn fill_keys_all_flag_accepted() {
         let cli = CliRunner::new();
         let result = cli.run(&["fill-keys", "--help"]);
-        result
-            .assert_success()
-            .assert_stdout_contains("--all");
+        result.assert_success().assert_stdout_contains("--all");
     }
 
     #[test]
     fn fill_keys_range_flag_accepted() {
         let cli = CliRunner::new();
         let result = cli.run(&["fill-keys", "--help"]);
-        result
-            .assert_success()
-            .assert_stdout_contains("--range");
+        result.assert_success().assert_stdout_contains("--range");
     }
 
     #[test]
     fn fill_keys_keys_flag_accepted() {
         let cli = CliRunner::new();
         let result = cli.run(&["fill-keys", "--help"]);
-        result
-            .assert_success()
-            .assert_stdout_contains("--keys");
+        result.assert_success().assert_stdout_contains("--keys");
     }
 
     #[test]
@@ -797,7 +798,12 @@ mod scanner_patterns {
         let images = TestImages::create_with_pattern(4, 72, "icon_{index}.png");
 
         // Test that custom pattern is accepted
-        let result = cli.run_robot(&["set-keys", images.path_str(), "--pattern", "icon_{index}.png"]);
+        let result = cli.run_robot(&[
+            "set-keys",
+            images.path_str(),
+            "--pattern",
+            "icon_{index}.png",
+        ]);
         // Will fail due to no device, but pattern should be accepted
         result.assert_failure();
     }
@@ -807,7 +813,12 @@ mod scanner_patterns {
         let cli = CliRunner::new();
         let images = TestImages::create_with_pattern(4, 72, "button-{index}.jpg");
 
-        let result = cli.run_robot(&["set-keys", images.path_str(), "--pattern", "button-{index}.jpg"]);
+        let result = cli.run_robot(&[
+            "set-keys",
+            images.path_str(),
+            "--pattern",
+            "button-{index}.jpg",
+        ]);
         result.assert_failure();
         // Should fail due to device, not pattern
     }

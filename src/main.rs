@@ -18,11 +18,16 @@ use std::io::{self, IsTerminal};
 
 use clap::Parser;
 use colored::Colorize;
+use image::GenericImageView;
 use serde::Serialize;
 
 use cli::{Cli, Commands};
 use error::{Result, SdError};
-use output::{Output, OutputMode};
+use output::{
+    BrightnessDryRunDetails, ClearAllDryRunDetails, ClearKeyDryRunDetails, ClearKeysDryRunDetails,
+    DeviceContext, DryRunResponse, FillKeyDryRunDetails, ImageSourceInfo, Output, OutputMode,
+    ProcessingInfo, SetKeyDryRunDetails, ValidationError,
+};
 
 /// Build information embedded at compile time.
 mod build_info {
@@ -278,8 +283,14 @@ fn cmd_info(cli: &Cli, _args: &cli::InfoArgs, output: &dyn Output) -> Result<()>
 }
 
 fn cmd_brightness(cli: &Cli, args: &cli::BrightnessArgs, output: &dyn Output) -> Result<()> {
+    // Validate brightness level
     if args.level > 100 {
         return Err(SdError::InvalidBrightness { value: args.level });
+    }
+
+    // Handle dry-run mode
+    if cli.is_dry_run() {
+        return cmd_brightness_dry_run(cli, args);
     }
 
     let device = open_device(cli)?;
@@ -292,7 +303,54 @@ fn cmd_brightness(cli: &Cli, args: &cli::BrightnessArgs, output: &dyn Output) ->
     Ok(())
 }
 
+/// Dry-run handler for brightness command.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type
+fn cmd_brightness_dry_run(cli: &Cli, args: &cli::BrightnessArgs) -> Result<()> {
+    // Try to get device info for context (may fail if no device connected)
+    let device_result = open_device(cli);
+
+    if cli.use_json() {
+        let details = BrightnessDryRunDetails::new(args.level, None);
+
+        let response = match device_result {
+            Ok(device) => {
+                let info = device::get_device_info(&device);
+                let ctx = DeviceContext::from_info(&info);
+                DryRunResponse::success("set_brightness", details, ctx)
+            }
+            Err(ref e) => {
+                // Device not connected - still valid dry-run
+                let ctx = DeviceContext::disconnected(cli.serial.clone());
+                DryRunResponse::success("set_brightness", details, ctx)
+                    .with_warnings(vec![format!("Device not connected: {e}")])
+            }
+        };
+
+        output_json(cli, &response);
+    } else {
+        // Human-readable dry-run output
+        println!("DRY RUN: Would set brightness to {}%", args.level);
+
+        match device_result {
+            Ok(device) => {
+                let info = device::get_device_info(&device);
+                println!("  Device: {} (serial: {})", info.product_name, info.serial);
+            }
+            Err(e) => {
+                println!("  Device: not connected ({})", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_set_key(cli: &Cli, args: &cli::SetKeyArgs, output: &dyn Output) -> Result<()> {
+    // Handle dry-run mode
+    if cli.is_dry_run() {
+        return cmd_set_key_dry_run(cli, args);
+    }
+
     let device = open_device(cli)?;
     device::set_key_image(&device, args.key, &args.image)?;
 
@@ -301,6 +359,174 @@ fn cmd_set_key(cli: &Cli, args: &cli::SetKeyArgs, output: &dyn Output) -> Result
 
     output.key_set(args.key, &args.image);
     Ok(())
+}
+
+/// Dry-run handler for set-key command.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type
+fn cmd_set_key_dry_run(cli: &Cli, args: &cli::SetKeyArgs) -> Result<()> {
+    // Try to get device info for context
+    let device_result = open_device(cli);
+
+    // Analyze the source image
+    let source_info = analyze_image_source(&args.image);
+
+    if cli.use_json() {
+        let (device_ctx, device_info) = match &device_result {
+            Ok(device) => {
+                let info = device::get_device_info(device);
+                (DeviceContext::from_info(&info), Some(info))
+            }
+            Err(_) => (DeviceContext::disconnected(cli.serial.clone()), None),
+        };
+
+        // Calculate processing info
+        let target_dims = device_info
+            .as_ref()
+            .map(|i| (i.key_width as u32, i.key_height as u32))
+            .unwrap_or((96, 96)); // Default XL dimensions
+
+        let resize_needed = source_info
+            .dimensions
+            .map(|(w, h)| w != target_dims.0 || h != target_dims.1)
+            .unwrap_or(false);
+
+        let processing = ProcessingInfo {
+            resize_needed,
+            target_dimensions: target_dims,
+        };
+
+        let details = SetKeyDryRunDetails::new(args.key, source_info.clone(), processing);
+
+        // Build response based on validation
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+
+        // Check if image exists
+        if !source_info.exists {
+            errors.push(ValidationError {
+                field: "image".to_string(),
+                error: format!("Image file not found: {}", args.image.display()),
+                suggestion: Some(
+                    "Check the file path. Use absolute paths or paths relative to current directory."
+                        .to_string(),
+                ),
+            });
+        }
+
+        // Check key index if device connected
+        if let Some(ref info) = device_info {
+            if args.key >= info.key_count {
+                errors.push(ValidationError {
+                    field: "key".to_string(),
+                    error: format!(
+                        "Key index {} is out of range (device has {} keys, valid: 0-{})",
+                        args.key,
+                        info.key_count,
+                        info.key_count - 1
+                    ),
+                    suggestion: Some(format!("Use a key index from 0 to {}", info.key_count - 1)),
+                });
+            }
+        }
+
+        // Add resize warning
+        if resize_needed {
+            if let Some((w, h)) = source_info.dimensions {
+                warnings.push(format!(
+                    "Image will be resized from {}x{} to {}x{}",
+                    w, h, target_dims.0, target_dims.1
+                ));
+            }
+        }
+
+        // Add device warning if not connected
+        if let Err(ref e) = device_result {
+            warnings.push(format!("Device not connected: {e}"));
+        }
+
+        let response = if errors.is_empty() {
+            DryRunResponse::success("set_key", details, device_ctx).with_warnings(warnings)
+        } else {
+            let reason = if !source_info.exists {
+                "Image file not found"
+            } else {
+                "Validation failed"
+            };
+            DryRunResponse::failure("set_key", reason, errors, details, device_ctx)
+                .with_warnings(warnings)
+        };
+
+        output_json(cli, &response);
+    } else {
+        // Human-readable dry-run output
+        println!(
+            "DRY RUN: Would set key {} to {}",
+            args.key,
+            args.image.display()
+        );
+
+        if source_info.exists {
+            if let Some((w, h)) = source_info.dimensions {
+                println!("  Image: {}x{}", w, h);
+            }
+            if let Some(format) = &source_info.format {
+                println!("  Format: {}", format.to_uppercase());
+            }
+            if let Some(size) = source_info.size_bytes {
+                println!("  Size: {} bytes", size);
+            }
+        } else {
+            println!("  WARNING: Image file not found!");
+        }
+
+        match device_result {
+            Ok(device) => {
+                let info = device::get_device_info(&device);
+                println!("  Device: {} (serial: {})", info.product_name, info.serial);
+                if args.key >= info.key_count {
+                    println!(
+                        "  WARNING: Key {} is out of range (max: {})",
+                        args.key,
+                        info.key_count - 1
+                    );
+                }
+            }
+            Err(e) => {
+                println!("  Device: not connected ({})", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Analyze an image source file without fully loading it.
+fn analyze_image_source(path: &std::path::Path) -> ImageSourceInfo {
+    let exists = path.exists();
+    let metadata = std::fs::metadata(path).ok();
+    let size_bytes = metadata.as_ref().map(|m| m.len());
+
+    // Get format from extension
+    let format = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+
+    // Try to read dimensions if file exists
+    let dimensions = if exists {
+        image::image_dimensions(path).ok()
+    } else {
+        None
+    };
+
+    ImageSourceInfo {
+        path: path.display().to_string(),
+        exists,
+        readable: exists && metadata.map(|m| m.is_file()).unwrap_or(false),
+        format,
+        dimensions,
+        size_bytes,
+    }
 }
 
 #[allow(clippy::too_many_lines)] // Batch operations are inherently complex
@@ -313,8 +539,8 @@ fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
     let scan_result = batch::scan_directory(&args.dir, &args.pattern, device_info.key_count)
         .map_err(|e| SdError::Other(e.to_string()))?;
 
-    // Handle dry-run mode
-    if args.dry_run {
+    // Handle dry-run mode (check both global and local flag)
+    if cli.is_dry_run() || args.dry_run {
         return cmd_set_keys_dry_run(cli, args, &device_info, &scan_result);
     }
 
@@ -460,6 +686,36 @@ struct BatchSetKeysResult {
     skipped_count: usize,
 }
 
+/// Dry-run details for set-keys batch command.
+#[derive(Serialize)]
+struct SetKeysDryRunDetails {
+    directory: String,
+    pattern: String,
+    operations: Vec<SetKeysDryRunOperation>,
+    summary: SetKeysDryRunSummary,
+}
+
+/// Per-key dry-run operation details.
+#[derive(Serialize)]
+struct SetKeysDryRunOperation {
+    key: u8,
+    source: Option<String>,
+    would_succeed: bool,
+    resize_needed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Summary stats for set-keys dry-run.
+#[derive(Serialize)]
+struct SetKeysDryRunSummary {
+    total_keys: usize,
+    matching_files: usize,
+    would_succeed: usize,
+    would_fail: usize,
+    unmatched: usize,
+}
+
 /// Dry-run handler for set-keys command.
 #[allow(clippy::unnecessary_wraps)] // Consistent return type
 fn cmd_set_keys_dry_run(
@@ -469,33 +725,136 @@ fn cmd_set_keys_dry_run(
     scan_result: &batch::ScanResult,
 ) -> Result<()> {
     if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({
-                "dry_run": true,
-                "device": {
-                    "serial": device_info.serial,
-                    "model": device_info.product_name,
-                    "key_count": device_info.key_count,
-                },
-                "directory": args.dir.display().to_string(),
-                "pattern": args.pattern,
-                "matched": scan_result.mappings.iter().map(|m| {
-                    serde_json::json!({
-                        "key": m.key,
-                        "path": m.path.display().to_string(),
-                        "size_bytes": m.size_bytes,
-                    })
-                }).collect::<Vec<_>>(),
-                "unmatched_count": scan_result.unmatched.len(),
-                "invalid": scan_result.invalid.iter().map(|(p, reason)| {
-                    serde_json::json!({
-                        "path": p.display().to_string(),
-                        "reason": reason,
-                    })
-                }).collect::<Vec<_>>(),
-            }),
-        );
+        let mut operations = Vec::new();
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+        let mut resize_count = 0;
+
+        let in_scope = |key: u8, range: Option<&String>, start_key: u8| {
+            if let Some(range_str) = range {
+                if !key_in_range(key, range_str) {
+                    return false;
+                }
+            }
+            key >= start_key
+        };
+
+        for mapping in &scan_result.mappings {
+            if !in_scope(mapping.key, args.key_range.as_ref(), args.start_key) {
+                continue;
+            }
+
+            let mut op = SetKeysDryRunOperation {
+                key: mapping.key,
+                source: Some(mapping.path.display().to_string()),
+                would_succeed: true,
+                resize_needed: None,
+                error: None,
+            };
+
+            match image::open(&mapping.path) {
+                Ok(img) => {
+                    let (w, h) = img.dimensions();
+                    let resize_needed =
+                        w != device_info.key_width as u32 || h != device_info.key_height as u32;
+                    if resize_needed {
+                        resize_count += 1;
+                    }
+                    op.resize_needed = Some(resize_needed);
+                }
+                Err(e) => {
+                    let error = format!("Image processing failed: {e}");
+                    op.would_succeed = false;
+                    op.error = Some(error.clone());
+                    errors.push(ValidationError {
+                        field: format!("image[{}]", mapping.key),
+                        error,
+                        suggestion: Some(
+                            "Use a supported image format: png, jpg, jpeg, gif, bmp, webp"
+                                .to_string(),
+                        ),
+                    });
+                }
+            }
+
+            operations.push(op);
+        }
+
+        let has_any_matches = !scan_result.mappings.is_empty();
+
+        if !has_any_matches {
+            errors.push(ValidationError {
+                field: "pattern".to_string(),
+                error: format!(
+                    "No files matching pattern '{}' found in {}",
+                    args.pattern,
+                    args.dir.display()
+                ),
+                suggestion: Some("Check the directory and filename pattern".to_string()),
+            });
+        }
+
+        if !scan_result.unmatched.is_empty() {
+            warnings.push(format!(
+                "{} files didn't match the pattern",
+                scan_result.unmatched.len()
+            ));
+        }
+
+        if !scan_result.invalid.is_empty() {
+            warnings.push(format!(
+                "{} files had out-of-range key indices (max {})",
+                scan_result.invalid.len(),
+                device_info.key_count.saturating_sub(1)
+            ));
+        }
+
+        if resize_count > 0 {
+            warnings.push(format!(
+                "{resize_count} images will be resized to {}x{}",
+                device_info.key_width, device_info.key_height
+            ));
+        }
+
+        let total_keys = (0..device_info.key_count)
+            .filter(|key| in_scope(*key, args.key_range.as_ref(), args.start_key))
+            .count();
+        let matching_files = operations.len();
+        let would_succeed = operations.iter().filter(|op| op.would_succeed).count();
+        let would_fail = matching_files.saturating_sub(would_succeed);
+        let unmatched = total_keys.saturating_sub(matching_files);
+
+        if has_any_matches && matching_files == 0 {
+            warnings.push("No matching files within the specified key range/start_key".to_string());
+        }
+
+        let details = SetKeysDryRunDetails {
+            directory: args.dir.display().to_string(),
+            pattern: args.pattern.clone(),
+            operations,
+            summary: SetKeysDryRunSummary {
+                total_keys,
+                matching_files,
+                would_succeed,
+                would_fail,
+                unmatched,
+            },
+        };
+
+        let device = DeviceContext::from_info(device_info);
+        let response = if errors.is_empty() && would_fail == 0 {
+            DryRunResponse::success("set_keys_batch", details, device).with_warnings(warnings)
+        } else {
+            let reason = if !has_any_matches {
+                "No matching files found"
+            } else {
+                "One or more operations would fail"
+            };
+            DryRunResponse::failure("set_keys_batch", reason, errors, details, device)
+                .with_warnings(warnings)
+        };
+
+        output_json(cli, &response);
     } else {
         println!(
             "DRY RUN: Would set {} keys from {}",
@@ -549,6 +908,11 @@ fn key_in_range(key: u8, range: &str) -> bool {
 }
 
 fn cmd_clear_key(cli: &Cli, args: &cli::ClearKeyArgs, output: &dyn Output) -> Result<()> {
+    // Handle dry-run mode
+    if cli.is_dry_run() {
+        return cmd_clear_key_dry_run(cli, args);
+    }
+
     let device = open_device(cli)?;
     device::clear_key(&device, args.key)?;
 
@@ -559,7 +923,87 @@ fn cmd_clear_key(cli: &Cli, args: &cli::ClearKeyArgs, output: &dyn Output) -> Re
     Ok(())
 }
 
+/// Dry-run handler for clear-key command.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type
+fn cmd_clear_key_dry_run(cli: &Cli, args: &cli::ClearKeyArgs) -> Result<()> {
+    // Try to get device info for context
+    let device_result = open_device(cli);
+
+    if cli.use_json() {
+        let (device_ctx, device_info) = match &device_result {
+            Ok(device) => {
+                let info = device::get_device_info(device);
+                (DeviceContext::from_info(&info), Some(info))
+            }
+            Err(_) => (DeviceContext::disconnected(cli.serial.clone()), None),
+        };
+
+        let details = ClearKeyDryRunDetails::new(args.key);
+
+        // Build response based on validation
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+
+        // Check key index if device connected
+        if let Some(ref info) = device_info {
+            if args.key >= info.key_count {
+                errors.push(ValidationError {
+                    field: "key".to_string(),
+                    error: format!(
+                        "Key index {} is out of range (device has {} keys, valid: 0-{})",
+                        args.key,
+                        info.key_count,
+                        info.key_count - 1
+                    ),
+                    suggestion: Some(format!("Use a key index from 0 to {}", info.key_count - 1)),
+                });
+            }
+        }
+
+        // Add device warning if not connected
+        if let Err(ref e) = device_result {
+            warnings.push(format!("Device not connected: {e}"));
+        }
+
+        let response = if errors.is_empty() {
+            DryRunResponse::success("clear_key", details, device_ctx).with_warnings(warnings)
+        } else {
+            DryRunResponse::failure("clear_key", "Validation failed", errors, details, device_ctx)
+                .with_warnings(warnings)
+        };
+
+        output_json(cli, &response);
+    } else {
+        // Human-readable dry-run output
+        println!("DRY RUN: Would clear key {} (set to black)", args.key);
+
+        match device_result {
+            Ok(device) => {
+                let info = device::get_device_info(&device);
+                println!("  Device: {} (serial: {})", info.product_name, info.serial);
+                if args.key >= info.key_count {
+                    println!(
+                        "  WARNING: Key {} is out of range (max: {})",
+                        args.key,
+                        info.key_count - 1
+                    );
+                }
+            }
+            Err(e) => {
+                println!("  Device: not connected ({})", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_clear_all(cli: &Cli, _args: &cli::ClearAllArgs, output: &dyn Output) -> Result<()> {
+    // Handle dry-run mode
+    if cli.is_dry_run() {
+        return cmd_clear_all_dry_run(cli);
+    }
+
     let device = open_device(cli)?;
     let info = device::get_device_info(&device);
     device::clear_all_keys(&device)?;
@@ -571,7 +1015,61 @@ fn cmd_clear_all(cli: &Cli, _args: &cli::ClearAllArgs, output: &dyn Output) -> R
     Ok(())
 }
 
+/// Dry-run handler for clear-all command.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type
+fn cmd_clear_all_dry_run(cli: &Cli) -> Result<()> {
+    // Try to get device info for context
+    let device_result = open_device(cli);
+
+    if cli.use_json() {
+        let (device_ctx, key_count) = match &device_result {
+            Ok(device) => {
+                let info = device::get_device_info(device);
+                (DeviceContext::from_info(&info), info.key_count)
+            }
+            Err(_) => (DeviceContext::disconnected(cli.serial.clone()), 0),
+        };
+
+        let details = ClearAllDryRunDetails::new(key_count);
+
+        let mut warnings = Vec::new();
+
+        // Add device warning if not connected
+        if let Err(ref e) = device_result {
+            warnings.push(format!("Device not connected: {e}"));
+        }
+
+        let response =
+            DryRunResponse::success("clear_all", details, device_ctx).with_warnings(warnings);
+
+        output_json(cli, &response);
+    } else {
+        // Human-readable dry-run output
+        match device_result {
+            Ok(device) => {
+                let info = device::get_device_info(&device);
+                println!(
+                    "DRY RUN: Would clear all {} keys (set to black)",
+                    info.key_count
+                );
+                println!("  Device: {} (serial: {})", info.product_name, info.serial);
+            }
+            Err(e) => {
+                println!("DRY RUN: Would clear all keys (set to black)");
+                println!("  Device: not connected ({})", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_fill_key(cli: &Cli, args: &cli::FillKeyArgs, output: &dyn Output) -> Result<()> {
+    // Handle dry-run mode
+    if cli.is_dry_run() {
+        return cmd_fill_key_dry_run(cli, args);
+    }
+
     let device = open_device(cli)?;
     let color = parse_color(&args.color)?;
     device::fill_key_color(&device, args.key, color)?;
@@ -581,6 +1079,86 @@ fn cmd_fill_key(cli: &Cli, args: &cli::FillKeyArgs, output: &dyn Output) -> Resu
     state::record::fill_key(args.key, color_str.clone());
 
     output.key_filled(args.key, &color_str);
+    Ok(())
+}
+
+/// Dry-run handler for fill-key command.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type
+fn cmd_fill_key_dry_run(cli: &Cli, args: &cli::FillKeyArgs) -> Result<()> {
+    // Validate color first
+    let color = parse_color(&args.color)?;
+    let color_str = format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2);
+
+    // Try to get device info for context
+    let device_result = open_device(cli);
+
+    if cli.use_json() {
+        let (device_ctx, device_info) = match &device_result {
+            Ok(device) => {
+                let info = device::get_device_info(device);
+                (DeviceContext::from_info(&info), Some(info))
+            }
+            Err(_) => (DeviceContext::disconnected(cli.serial.clone()), None),
+        };
+
+        let details = FillKeyDryRunDetails::new(args.key, color_str.clone(), color);
+
+        // Build response based on validation
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+
+        // Check key index if device connected
+        if let Some(ref info) = device_info {
+            if args.key >= info.key_count {
+                errors.push(ValidationError {
+                    field: "key".to_string(),
+                    error: format!(
+                        "Key index {} is out of range (device has {} keys, valid: 0-{})",
+                        args.key,
+                        info.key_count,
+                        info.key_count - 1
+                    ),
+                    suggestion: Some(format!("Use a key index from 0 to {}", info.key_count - 1)),
+                });
+            }
+        }
+
+        // Add device warning if not connected
+        if let Err(ref e) = device_result {
+            warnings.push(format!("Device not connected: {e}"));
+        }
+
+        let response = if errors.is_empty() {
+            DryRunResponse::success("fill_key", details, device_ctx).with_warnings(warnings)
+        } else {
+            DryRunResponse::failure("fill_key", "Validation failed", errors, details, device_ctx)
+                .with_warnings(warnings)
+        };
+
+        output_json(cli, &response);
+    } else {
+        // Human-readable dry-run output
+        println!("DRY RUN: Would fill key {} with color {}", args.key, color_str);
+        println!("  RGB: ({}, {}, {})", color.0, color.1, color.2);
+
+        match device_result {
+            Ok(device) => {
+                let info = device::get_device_info(&device);
+                println!("  Device: {} (serial: {})", info.product_name, info.serial);
+                if args.key >= info.key_count {
+                    println!(
+                        "  WARNING: Key {} is out of range (max: {})",
+                        args.key,
+                        info.key_count - 1
+                    );
+                }
+            }
+            Err(e) => {
+                println!("  Device: not connected ({})", e);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -697,6 +1275,11 @@ fn cmd_fill_keys(cli: &Cli, args: &cli::FillKeysArgs) -> Result<()> {
 }
 
 fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
+    // Handle dry-run mode
+    if cli.is_dry_run() {
+        return cmd_clear_keys_dry_run(cli, args);
+    }
+
     let device = open_device(cli)?;
     let device_info = device::get_device_info(&device);
 
@@ -808,6 +1391,112 @@ fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
         );
     } else if !cli.quiet {
         println!("Cleared {success_count} keys ({error_count} errors)");
+    }
+
+    Ok(())
+}
+
+/// Dry-run handler for clear-keys (batch) command.
+#[allow(clippy::unnecessary_wraps)] // Consistent return type
+fn cmd_clear_keys_dry_run(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
+    // Try to get device info for context
+    let device_result = open_device(cli);
+
+    if cli.use_json() {
+        let (device_ctx, device_info) = match &device_result {
+            Ok(device) => {
+                let info = device::get_device_info(device);
+                (DeviceContext::from_info(&info), Some(info))
+            }
+            Err(_) => (DeviceContext::disconnected(cli.serial.clone()), None),
+        };
+
+        // We need key_count to resolve selection - use device info if available
+        let key_count = device_info.as_ref().map(|i| i.key_count).unwrap_or(32);
+
+        // Resolve key selection
+        let keys_result = resolve_key_selection(args.all, args.range.as_deref(), &args.keys, key_count);
+
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+
+        // Add device warning if not connected
+        if let Err(ref e) = device_result {
+            warnings.push(format!("Device not connected: {e}"));
+            warnings.push("Using default key count of 32 for validation".to_string());
+        }
+
+        match keys_result {
+            Ok(keys) => {
+                if keys.is_empty() {
+                    errors.push(ValidationError {
+                        field: "keys".to_string(),
+                        error: "No keys specified".to_string(),
+                        suggestion: Some("Use --all, --range, or --keys to specify which keys to clear".to_string()),
+                    });
+                    let details = ClearKeysDryRunDetails::new(vec![]);
+                    let response = DryRunResponse::failure("clear_keys", "No keys specified", errors, details, device_ctx)
+                        .with_warnings(warnings);
+                    output_json(cli, &response);
+                } else {
+                    let details = ClearKeysDryRunDetails::new(keys);
+                    let response = DryRunResponse::success("clear_keys", details, device_ctx).with_warnings(warnings);
+                    output_json(cli, &response);
+                }
+            }
+            Err(e) => {
+                errors.push(ValidationError {
+                    field: "keys".to_string(),
+                    error: e.to_string(),
+                    suggestion: Some("Check the key range or indices specified".to_string()),
+                });
+                let details = ClearKeysDryRunDetails::new(vec![]);
+                let response = DryRunResponse::failure("clear_keys", "Invalid key selection", errors, details, device_ctx)
+                    .with_warnings(warnings);
+                output_json(cli, &response);
+            }
+        }
+    } else {
+        // Human-readable dry-run output
+        match device_result {
+            Ok(device) => {
+                let info = device::get_device_info(&device);
+                let keys_result = resolve_key_selection(args.all, args.range.as_deref(), &args.keys, info.key_count);
+
+                match keys_result {
+                    Ok(keys) => {
+                        if keys.is_empty() {
+                            println!("DRY RUN: No keys specified");
+                            println!("  Use --all, --range, or --keys to specify which keys to clear");
+                        } else if args.all {
+                            println!("DRY RUN: Would clear all {} keys (set to black)", info.key_count);
+                        } else {
+                            println!("DRY RUN: Would clear {} keys: {:?}", keys.len(), keys);
+                        }
+                        println!("  Device: {} (serial: {})", info.product_name, info.serial);
+                    }
+                    Err(e) => {
+                        println!("DRY RUN: Invalid key selection: {}", e);
+                        println!("  Device: {} (serial: {})", info.product_name, info.serial);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("DRY RUN: Would clear keys (set to black)");
+                println!("  Device: not connected ({})", e);
+
+                // Try to show what would be cleared based on args
+                if args.all {
+                    println!("  Selection: all keys");
+                } else if let Some(ref range) = args.range {
+                    println!("  Selection: keys in range {}", range);
+                } else if !args.keys.is_empty() {
+                    println!("  Selection: keys {:?}", args.keys);
+                } else {
+                    println!("  Selection: none specified");
+                }
+            }
+        }
     }
 
     Ok(())
@@ -1020,17 +1709,9 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
 #[derive(Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum WatchConnectionEvent {
-    Disconnected {
-        reason: String,
-        reconnecting: bool,
-    },
-    Reconnecting {
-        attempt: u32,
-        delay_ms: u64,
-    },
-    Reconnected {
-        attempt: u32,
-    },
+    Disconnected { reason: String, reconnecting: bool },
+    Reconnecting { attempt: u32, delay_ms: u64 },
+    Reconnected { attempt: u32 },
 }
 
 /// Emits a watch connection event in robot mode.
@@ -1072,7 +1753,8 @@ fn cmd_save(cli: &Cli, args: &cli::SaveArgs) -> Result<()> {
     // Validate snapshot name
     if !is_valid_snapshot_name(&args.name) {
         return Err(SdError::Other(
-            "Snapshot name must be 1-64 characters, alphanumeric with hyphens/underscores".to_string(),
+            "Snapshot name must be 1-64 characters, alphanumeric with hyphens/underscores"
+                .to_string(),
         ));
     }
 
@@ -1184,9 +1866,9 @@ fn cmd_restore(cli: &Cli, args: &cli::RestoreArgs) -> Result<()> {
     let db = snapshot::SnapshotDb::open_default()?;
 
     // Load snapshot
-    let snap = db.load_snapshot(&args.name)?.ok_or_else(|| {
-        SdError::Other(format!("Snapshot '{}' not found", args.name))
-    })?;
+    let snap = db
+        .load_snapshot(&args.name)?
+        .ok_or_else(|| SdError::Other(format!("Snapshot '{}' not found", args.name)))?;
 
     // Open device
     let device = open_device(cli)?;
@@ -1214,7 +1896,10 @@ fn cmd_restore(cli: &Cli, args: &cli::RestoreArgs) -> Result<()> {
 
     for key in &snap.keys {
         let result = match &key.state {
-            snapshot::KeyState::Image { source_path, image_hash } => {
+            snapshot::KeyState::Image {
+                source_path,
+                image_hash,
+            } => {
                 // Try to load from cache first, then source path
                 apply_cached_image(&device, key.key_index, image_hash, source_path.as_ref())
             }
@@ -1224,11 +1909,9 @@ fn cmd_restore(cli: &Cli, args: &cli::RestoreArgs) -> Result<()> {
                     state::record::fill_key(key.key_index, hex.clone());
                 })
             }
-            snapshot::KeyState::Clear => {
-                device::clear_key(&device, key.key_index).map(|()| {
-                    state::record::clear_key(key.key_index);
-                })
-            }
+            snapshot::KeyState::Clear => device::clear_key(&device, key.key_index).map(|()| {
+                state::record::clear_key(key.key_index);
+            }),
         };
 
         match result {
@@ -1255,10 +1938,7 @@ fn cmd_restore(cli: &Cli, args: &cli::RestoreArgs) -> Result<()> {
         );
     } else if !cli.quiet {
         if error_count == 0 {
-            println!(
-                "Restored snapshot '{}' ({} keys)",
-                args.name, applied_count
-            );
+            println!("Restored snapshot '{}' ({} keys)", args.name, applied_count);
         } else {
             println!(
                 "Restored snapshot '{}' ({} keys, {} failed)",
@@ -1296,10 +1976,7 @@ fn cmd_snapshots(cli: &Cli, args: &cli::SnapshotsArgs) -> Result<()> {
                 if let Some(ref desc) = snap.description {
                     println!("  {}", desc.dimmed());
                 }
-                println!(
-                    "  Created: {}",
-                    snap.created_at.format("%Y-%m-%d %H:%M")
-                );
+                println!("  Created: {}", snap.created_at.format("%Y-%m-%d %H:%M"));
             } else {
                 println!("{}", snap.name);
             }
@@ -1321,9 +1998,9 @@ fn cmd_snapshot_show(cli: &Cli, args: &cli::SnapshotShowArgs) -> Result<()> {
     let db = snapshot::SnapshotDb::open_default()?;
 
     // Load snapshot
-    let snap = db.load_snapshot(&args.name)?.ok_or_else(|| {
-        SdError::Other(format!("Snapshot '{}' not found", args.name))
-    })?;
+    let snap = db
+        .load_snapshot(&args.name)?
+        .ok_or_else(|| SdError::Other(format!("Snapshot '{}' not found", args.name)))?;
 
     if cli.use_json() {
         output_json(cli, &snap);
@@ -1364,12 +2041,19 @@ fn cmd_snapshot_show(cli: &Cli, args: &cli::SnapshotShowArgs) -> Result<()> {
             println!("{}", "Keys:".bold());
             for key in &snap.keys {
                 let state_desc = match &key.state {
-                    snapshot::KeyState::Image { source_path, image_hash } => {
+                    snapshot::KeyState::Image {
+                        source_path,
+                        image_hash,
+                    } => {
                         let path_str = source_path
                             .as_ref()
                             .map(|p| p.display().to_string())
                             .unwrap_or_else(|| "(cached)".to_string());
-                        format!("image: {} [{}...]", path_str, &image_hash[..8.min(image_hash.len())])
+                        format!(
+                            "image: {} [{}...]",
+                            path_str,
+                            &image_hash[..8.min(image_hash.len())]
+                        )
                     }
                     snapshot::KeyState::Color { hex } => format!("color: {hex}"),
                     snapshot::KeyState::Clear => "cleared".to_string(),
@@ -1447,9 +2131,8 @@ fn is_valid_snapshot_name(name: &str) -> bool {
 fn hash_image_file(path: &std::path::Path) -> Result<String> {
     use sha2::{Digest, Sha256};
 
-    let data = std::fs::read(path).map_err(|e| {
-        SdError::Other(format!("Failed to read image {}: {e}", path.display()))
-    })?;
+    let data = std::fs::read(path)
+        .map_err(|e| SdError::Other(format!("Failed to read image {}: {e}", path.display())))?;
 
     let mut hasher = Sha256::new();
     hasher.update(&data);
@@ -1458,11 +2141,7 @@ fn hash_image_file(path: &std::path::Path) -> Result<String> {
 }
 
 /// Caches an image to content-addressable storage.
-fn cache_image(
-    db: &snapshot::SnapshotDb,
-    hash: &str,
-    source_path: &std::path::Path,
-) -> Result<()> {
+fn cache_image(db: &snapshot::SnapshotDb, hash: &str, source_path: &std::path::Path) -> Result<()> {
     // Get cache path
     let cache_path = snapshot::image_cache_path(hash)?;
 
@@ -1473,20 +2152,17 @@ fn cache_image(
 
     // Create cache directory
     if let Some(parent) = cache_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            SdError::Other(format!("Failed to create cache directory: {e}"))
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| SdError::Other(format!("Failed to create cache directory: {e}")))?;
     }
 
     // Copy image to cache (could convert to webp in future)
-    std::fs::copy(source_path, &cache_path).map_err(|e| {
-        SdError::Other(format!("Failed to cache image: {e}"))
-    })?;
+    std::fs::copy(source_path, &cache_path)
+        .map_err(|e| SdError::Other(format!("Failed to cache image: {e}")))?;
 
     // Get file metadata for DB entry
-    let metadata = std::fs::metadata(&cache_path).map_err(|e| {
-        SdError::Other(format!("Failed to get cached image metadata: {e}"))
-    })?;
+    let metadata = std::fs::metadata(&cache_path)
+        .map_err(|e| SdError::Other(format!("Failed to get cached image metadata: {e}")))?;
 
     // Save to database
     let cached = snapshot::CachedImage::new(

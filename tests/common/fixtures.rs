@@ -45,11 +45,7 @@ impl TestImages {
         let dir = TempDir::new().expect("Failed to create temp directory");
 
         for i in 0..count {
-            let color = Rgb([
-                i.wrapping_mul(8),
-                i.wrapping_mul(16),
-                i.wrapping_mul(24),
-            ]);
+            let color = Rgb([i.wrapping_mul(8), i.wrapping_mul(16), i.wrapping_mul(24)]);
             let img = RgbImage::from_pixel(size, size, color);
             let path = dir.path().join(format!("key-{i}.png"));
             img.save(&path)
@@ -74,7 +70,11 @@ impl TestImages {
             let img = RgbImage::from_pixel(
                 size,
                 size,
-                Rgb([key.wrapping_mul(8), 128, 255_u8.wrapping_sub(key.wrapping_mul(8))]),
+                Rgb([
+                    key.wrapping_mul(8),
+                    128,
+                    255_u8.wrapping_sub(key.wrapping_mul(8)),
+                ]),
             );
             let path = dir.path().join(format!("key-{key}.png"));
             img.save(&path)
@@ -96,11 +96,7 @@ impl TestImages {
         let dir = TempDir::new().expect("Failed to create temp directory");
 
         for i in 0..count {
-            let color = Rgb([
-                i.wrapping_mul(8),
-                i.wrapping_mul(16),
-                i.wrapping_mul(24),
-            ]);
+            let color = Rgb([i.wrapping_mul(8), i.wrapping_mul(16), i.wrapping_mul(24)]);
             let img = RgbImage::from_pixel(size, size, color);
             let filename = pattern.replace("{index}", &i.to_string());
             let path = dir.path().join(filename);

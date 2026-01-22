@@ -45,7 +45,13 @@ pub struct Snapshot {
 impl Snapshot {
     /// Create a new snapshot with current timestamp.
     #[must_use]
-    pub fn new(name: String, device_model: String, key_count: u8, key_width: u32, key_height: u32) -> Self {
+    pub fn new(
+        name: String,
+        device_model: String,
+        key_count: u8,
+        key_width: u32,
+        key_height: u32,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: None,
@@ -222,13 +228,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_new() {
-        let snap = Snapshot::new(
-            "test".to_string(),
-            "StreamDeckXL".to_string(),
-            32,
-            96,
-            96,
-        );
+        let snap = Snapshot::new("test".to_string(), "StreamDeckXL".to_string(), 32, 96, 96);
         assert_eq!(snap.name, "test");
         assert_eq!(snap.device_model, "StreamDeckXL");
         assert_eq!(snap.key_count, 32);
@@ -238,20 +238,18 @@ mod tests {
 
     #[test]
     fn test_snapshot_with_brightness() {
-        let snap = Snapshot::new(
-            "test".to_string(),
-            "StreamDeckMK2".to_string(),
-            15,
-            72,
-            72,
-        )
-        .with_brightness(80);
+        let snap = Snapshot::new("test".to_string(), "StreamDeckMK2".to_string(), 15, 72, 72)
+            .with_brightness(80);
         assert_eq!(snap.brightness, Some(80));
     }
 
     #[test]
     fn test_snapshot_key_types() {
-        let image_key = SnapshotKey::image(0, Some(PathBuf::from("/tmp/icon.png")), "abc123".to_string());
+        let image_key = SnapshotKey::image(
+            0,
+            Some(PathBuf::from("/tmp/icon.png")),
+            "abc123".to_string(),
+        );
         assert!(matches!(image_key.state, KeyState::Image { .. }));
 
         let color_key = SnapshotKey::color(1, "#ff0000".to_string());
@@ -285,7 +283,9 @@ mod tests {
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"type\":\"image\""));
 
-        let state = KeyState::Color { hex: "#ff0000".to_string() };
+        let state = KeyState::Color {
+            hex: "#ff0000".to_string(),
+        };
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("\"type\":\"color\""));
 

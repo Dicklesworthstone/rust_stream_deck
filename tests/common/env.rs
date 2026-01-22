@@ -1,7 +1,7 @@
 //! Environment variable helpers for tests.
 #![allow(dead_code)]
 
-use env_lock::{lock_env, EnvGuard as LockedEnvGuard};
+use env_lock::{EnvGuard as LockedEnvGuard, lock_env};
 use tracing::{instrument, trace};
 
 /// RAII guard to restore environment variables on drop.

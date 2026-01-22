@@ -185,7 +185,13 @@ fn generate_batch_images(base: &Path) {
     // Gaps (even numbers only)
     for i in (0..16_u8).step_by(2) {
         let color = key_color(i);
-        create_numbered_image(&batch_dir.join(format!("gaps/key-{i}.png")), 72, 72, color, i);
+        create_numbered_image(
+            &batch_dir.join(format!("gaps/key-{i}.png")),
+            72,
+            72,
+            color,
+            i,
+        );
     }
 
     // Custom pattern naming
@@ -262,11 +268,11 @@ fn create_numbered_image(path: &Path, width: u32, height: u32, color: [u8; 3], n
         let dy = (angle.sin() * radius) as i32;
 
         #[allow(clippy::cast_sign_loss)]
-        let px = (i32::try_from(center_x).unwrap_or(0) + dx).clamp(0, i32::try_from(width).unwrap_or(0) - 1)
-            as u32;
+        let px = (i32::try_from(center_x).unwrap_or(0) + dx)
+            .clamp(0, i32::try_from(width).unwrap_or(0) - 1) as u32;
         #[allow(clippy::cast_sign_loss)]
-        let py = (i32::try_from(center_y).unwrap_or(0) + dy).clamp(0, i32::try_from(height).unwrap_or(0) - 1)
-            as u32;
+        let py = (i32::try_from(center_y).unwrap_or(0) + dy)
+            .clamp(0, i32::try_from(height).unwrap_or(0) - 1) as u32;
 
         // Draw small dot
         for ox in 0..dot_size {

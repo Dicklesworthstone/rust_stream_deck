@@ -62,7 +62,11 @@ pub fn capture_output<F: FnOnce()>(func: F) -> CapturedOutput {
         .read_to_string(&mut stderr)
         .expect("failed to read stderr buffer");
 
-    debug!(stdout_len = stdout.len(), stderr_len = stderr.len(), "Captured output");
+    debug!(
+        stdout_len = stdout.len(),
+        stderr_len = stderr.len(),
+        "Captured output"
+    );
     CapturedOutput { stdout, stderr }
 }
 

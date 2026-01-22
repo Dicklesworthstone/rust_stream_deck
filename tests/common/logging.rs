@@ -35,9 +35,9 @@ impl LogVerifier {
 
     /// Check if any log line contains both the level and message.
     fn contains_level_and_message(&self, level: &str, message: &str) -> bool {
-        self.log_lines
-            .iter()
-            .any(|line| line.contains(level) && line.to_lowercase().contains(&message.to_lowercase()))
+        self.log_lines.iter().any(|line| {
+            line.contains(level) && line.to_lowercase().contains(&message.to_lowercase())
+        })
     }
 
     /// Get all lines containing the specified level.

@@ -1,8 +1,8 @@
 //! Theme system for human-mode output.
 #![allow(dead_code)]
 
-use rich_rust::prelude::{BoxChars, Color, Style};
 use rich_rust::r#box::ROUNDED;
+use rich_rust::prelude::{BoxChars, Color, Style};
 
 /// Visual theme for Stream Deck CLI human-mode output.
 ///

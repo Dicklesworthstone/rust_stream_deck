@@ -160,7 +160,8 @@ impl Output for HumanOutput {
         self.console.print_renderable(&panel);
         for (idx, device) in devices.iter().enumerate() {
             trace!(index = idx, serial = %device.serial, "Listing device");
-            self.console.print(&format!("  {} ({})", device.product_name, device.serial));
+            self.console
+                .print(&format!("  {} ({})", device.product_name, device.serial));
         }
     }
 
@@ -169,8 +170,7 @@ impl Output for HumanOutput {
         debug!("Outputting device info");
         self.console
             .print_styled(&info.product_name, self.theme.header.clone());
-        self.console
-            .print(&format!("  Serial: {}", info.serial));
+        self.console.print(&format!("  Serial: {}", info.serial));
         self.console
             .print(&format!("  Firmware: {}", info.firmware_version));
         self.console.print(&format!(
@@ -257,8 +257,8 @@ impl Output for HumanOutput {
         content.append("\n");
 
         if let Some(sha) = git_sha {
-            let dirty = sha.contains("dirty")
-                || matches!(option_env!("VERGEN_GIT_DIRTY"), Some("true"));
+            let dirty =
+                sha.contains("dirty") || matches!(option_env!("VERGEN_GIT_DIRTY"), Some("true"));
             let clean_sha = sha
                 .replace(" (dirty)", "")
                 .replace("(dirty)", "")
@@ -268,10 +268,7 @@ impl Output for HumanOutput {
             content.append_styled(&label("Git SHA"), self.theme.label.clone());
             content.append_styled(&clean_sha, self.theme.value.clone());
             if dirty {
-                content.append_styled(
-                    " (dirty)",
-                    Style::new().color(self.theme.warning.clone()),
-                );
+                content.append_styled(" (dirty)", Style::new().color(self.theme.warning.clone()));
             }
             content.append("\n");
         }

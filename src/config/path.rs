@@ -60,9 +60,8 @@ pub fn resolve_path(path: &Path, config_dir: &Path) -> Result<PathBuf> {
 
 /// Resolve the user's home directory (cross-platform).
 pub fn home_dir() -> Result<PathBuf> {
-    dirs::home_dir().ok_or_else(|| {
-        SdError::ConfigInvalid("Could not determine home directory".to_string())
-    })
+    dirs::home_dir()
+        .ok_or_else(|| SdError::ConfigInvalid("Could not determine home directory".to_string()))
 }
 
 /// Validate that a path exists and is a supported image file.
@@ -118,7 +117,9 @@ impl PathResolver {
             config_dir.to_path_buf()
         });
 
-        Ok(Self { config_dir: canonical })
+        Ok(Self {
+            config_dir: canonical,
+        })
     }
 
     /// Resolve a path relative to the config file.
@@ -134,7 +135,7 @@ impl PathResolver {
     }
 
     /// Return the base config directory.
-    pub const fn config_dir(&self) -> &Path {
+    pub fn config_dir(&self) -> &Path {
         &self.config_dir
     }
 }
@@ -249,10 +250,7 @@ mod tests {
         for ext in ["png", "jpg", "jpeg", "gif", "bmp", "webp"] {
             let path = temp.path().join(format!("test.{ext}"));
             File::create(&path).unwrap();
-            assert!(
-                validate_image_path(&path).is_ok(),
-                "Should support .{ext}"
-            );
+            assert!(validate_image_path(&path).is_ok(), "Should support .{ext}");
         }
     }
 

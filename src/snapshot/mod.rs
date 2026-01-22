@@ -43,9 +43,5 @@
 mod db;
 mod schema;
 
-pub use db::{
-    default_db_path, default_image_cache_dir, image_cache_path, SnapshotDb,
-};
-pub use schema::{
-    CachedImage, KeyState, Snapshot, SnapshotKey, SnapshotSummary,
-};
+pub use db::{SnapshotDb, default_db_path, default_image_cache_dir, image_cache_path};
+pub use schema::{CachedImage, KeyState, Snapshot, SnapshotKey, SnapshotSummary};

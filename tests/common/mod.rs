@@ -6,13 +6,13 @@
 //! - `logging`: Log output verification helpers
 #![allow(dead_code)]
 
-pub mod cli;
+pub mod assertions;
 pub mod capture;
+pub mod cli;
 pub mod env;
 pub mod fixtures;
 pub mod logging;
 pub mod mocks;
-pub mod assertions;
 
 use rich_rust::prelude::{ColorSystem, Console};
 use tracing_subscriber::EnvFilter;

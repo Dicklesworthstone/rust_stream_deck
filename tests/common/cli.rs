@@ -107,9 +107,7 @@ impl CliRunner {
         let start = Instant::now();
 
         let mut cmd = Command::new(&self.binary_path);
-        cmd.args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Apply environment variables
         for (key, value) in &self.config.env_vars {

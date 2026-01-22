@@ -9,9 +9,15 @@ use crate::cli::Cli;
 use crate::device::{ButtonEvent, DeviceInfo};
 use crate::error::SdError;
 
+pub mod dry_run;
 pub mod human;
 pub mod robot;
 
+pub use dry_run::{
+    BrightnessDryRunDetails, ClearAllDryRunDetails, ClearKeyDryRunDetails, ClearKeysDryRunDetails,
+    DeviceContext, DryRunResponse, FillKeyDryRunDetails, ImageSourceInfo, ProcessingInfo,
+    SetKeyDryRunDetails, ValidationError,
+};
 pub use human::HumanOutput;
 pub use robot::RobotOutput;
 

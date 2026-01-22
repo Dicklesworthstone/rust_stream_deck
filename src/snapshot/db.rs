@@ -93,9 +93,8 @@ impl SnapshotDb {
         }
 
         debug!(path = %path.display(), "Opening snapshot database");
-        let conn = Connection::open(path).map_err(|e| {
-            SdError::Other(format!("Failed to open database: {e}"))
-        })?;
+        let conn = Connection::open(path)
+            .map_err(|e| SdError::Other(format!("Failed to open database: {e}")))?;
 
         let db = Self { conn };
         db.init_schema()?;
@@ -106,9 +105,8 @@ impl SnapshotDb {
     /// Creates an in-memory database (useful for testing).
     #[cfg(test)]
     pub fn in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory().map_err(|e| {
-            SdError::Other(format!("Failed to create in-memory database: {e}"))
-        })?;
+        let conn = Connection::open_in_memory()
+            .map_err(|e| SdError::Other(format!("Failed to create in-memory database: {e}")))?;
 
         let db = Self { conn };
         db.init_schema()?;
@@ -118,13 +116,13 @@ impl SnapshotDb {
     /// Initializes the database schema.
     fn init_schema(&self) -> Result<()> {
         // Enable foreign keys
-        self.conn.execute("PRAGMA foreign_keys = ON", []).map_err(|e| {
-            SdError::Other(format!("Failed to enable foreign keys: {e}"))
-        })?;
+        self.conn
+            .execute("PRAGMA foreign_keys = ON", [])
+            .map_err(|e| SdError::Other(format!("Failed to enable foreign keys: {e}")))?;
 
-        self.conn.execute_batch(SCHEMA_SQL).map_err(|e| {
-            SdError::Other(format!("Failed to initialize schema: {e}"))
-        })?;
+        self.conn
+            .execute_batch(SCHEMA_SQL)
+            .map_err(|e| SdError::Other(format!("Failed to initialize schema: {e}")))?;
         Ok(())
     }
 
@@ -133,9 +131,10 @@ impl SnapshotDb {
     /// If a snapshot with the same name exists, it will be updated.
     #[instrument(skip(self, snapshot), fields(name = %snapshot.name))]
     pub fn save_snapshot(&mut self, snapshot: &Snapshot) -> Result<i64> {
-        let tx = self.conn.transaction().map_err(|e| {
-            SdError::Other(format!("Failed to start transaction: {e}"))
-        })?;
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|e| SdError::Other(format!("Failed to start transaction: {e}")))?;
 
         let now = Utc::now().to_rfc3339();
 
@@ -177,8 +176,11 @@ impl SnapshotDb {
             .map_err(|e| SdError::Other(format!("Failed to update snapshot: {e}")))?;
 
             // Delete existing keys
-            tx.execute("DELETE FROM snapshot_keys WHERE snapshot_id = ?1", params![id])
-                .map_err(|e| SdError::Other(format!("Failed to delete old keys: {e}")))?;
+            tx.execute(
+                "DELETE FROM snapshot_keys WHERE snapshot_id = ?1",
+                params![id],
+            )
+            .map_err(|e| SdError::Other(format!("Failed to delete old keys: {e}")))?;
 
             id
         } else {
@@ -208,7 +210,10 @@ impl SnapshotDb {
         // Insert keys
         for key in &snapshot.keys {
             let (state_type, source_path, image_hash, color_hex) = match &key.state {
-                KeyState::Image { source_path, image_hash } => (
+                KeyState::Image {
+                    source_path,
+                    image_hash,
+                } => (
                     "image",
                     source_path.as_ref().map(|p| p.display().to_string()),
                     Some(image_hash.clone()),
@@ -218,7 +223,10 @@ impl SnapshotDb {
                 KeyState::Clear => ("clear", None, None, None),
             };
 
-            trace!(key_index = key.key_index, state_type, "Inserting snapshot key");
+            trace!(
+                key_index = key.key_index,
+                state_type, "Inserting snapshot key"
+            );
             tx.execute(
                 "INSERT INTO snapshot_keys (snapshot_id, key_index, state_type, source_path, image_hash, color_hex, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -227,9 +235,8 @@ impl SnapshotDb {
             .map_err(|e| SdError::Other(format!("Failed to insert snapshot key: {e}")))?;
         }
 
-        tx.commit().map_err(|e| {
-            SdError::Other(format!("Failed to commit transaction: {e}"))
-        })?;
+        tx.commit()
+            .map_err(|e| SdError::Other(format!("Failed to commit transaction: {e}")))?;
 
         info!(name = %snapshot.name, id = snapshot_id, keys = snapshot.keys.len(), "Snapshot saved");
         Ok(snapshot_id)
@@ -263,7 +270,20 @@ impl SnapshotDb {
             )
             .ok();
 
-        let Some((id, name, description, device_model, device_serial, key_count, key_width, key_height, brightness, created_at, updated_at)) = row else {
+        let Some((
+            id,
+            name,
+            description,
+            device_model,
+            device_serial,
+            key_count,
+            key_width,
+            key_height,
+            brightness,
+            created_at,
+            updated_at,
+        )) = row
+        else {
             debug!(name, "Snapshot not found");
             return Ok(None);
         };
@@ -449,7 +469,18 @@ impl SnapshotDb {
             )
             .ok();
 
-        let Some((hash, original_path, width, height, format, size_bytes, created_at, last_accessed_at, access_count)) = row else {
+        let Some((
+            hash,
+            original_path,
+            width,
+            height,
+            format,
+            size_bytes,
+            created_at,
+            last_accessed_at,
+            access_count,
+        )) = row
+        else {
             return Ok(None);
         };
 
@@ -504,9 +535,8 @@ impl SnapshotDb {
 ///
 /// Location: `~/.local/share/sd/snapshots/snapshots.db`
 pub fn default_db_path() -> Result<PathBuf> {
-    let data_dir = dirs::data_local_dir().ok_or_else(|| {
-        SdError::Other("Could not determine local data directory".to_string())
-    })?;
+    let data_dir = dirs::data_local_dir()
+        .ok_or_else(|| SdError::Other("Could not determine local data directory".to_string()))?;
     Ok(data_dir.join("sd").join("snapshots").join("snapshots.db"))
 }
 
@@ -514,9 +544,8 @@ pub fn default_db_path() -> Result<PathBuf> {
 ///
 /// Location: `~/.local/share/sd/snapshots/images/`
 pub fn default_image_cache_dir() -> Result<PathBuf> {
-    let data_dir = dirs::data_local_dir().ok_or_else(|| {
-        SdError::Other("Could not determine local data directory".to_string())
-    })?;
+    let data_dir = dirs::data_local_dir()
+        .ok_or_else(|| SdError::Other("Could not determine local data directory".to_string()))?;
     Ok(data_dir.join("sd").join("snapshots").join("images"))
 }
 
@@ -552,7 +581,11 @@ mod tests {
         )
         .with_brightness(80);
 
-        snap.add_key(SnapshotKey::image(0, Some(PathBuf::from("/tmp/icon.png")), "abc123".to_string()));
+        snap.add_key(SnapshotKey::image(
+            0,
+            Some(PathBuf::from("/tmp/icon.png")),
+            "abc123".to_string(),
+        ));
         snap.add_key(SnapshotKey::color(1, "#ff0000".to_string()));
         snap.add_key(SnapshotKey::cleared(2));
 
@@ -604,8 +637,22 @@ mod tests {
     fn test_list_snapshots() {
         let mut db = SnapshotDb::in_memory().unwrap();
 
-        db.save_snapshot(&Snapshot::new("layout-1".to_string(), "XL".to_string(), 32, 96, 96)).unwrap();
-        db.save_snapshot(&Snapshot::new("layout-2".to_string(), "MK2".to_string(), 15, 72, 72)).unwrap();
+        db.save_snapshot(&Snapshot::new(
+            "layout-1".to_string(),
+            "XL".to_string(),
+            32,
+            96,
+            96,
+        ))
+        .unwrap();
+        db.save_snapshot(&Snapshot::new(
+            "layout-2".to_string(),
+            "MK2".to_string(),
+            15,
+            72,
+            72,
+        ))
+        .unwrap();
 
         let list = db.list_snapshots().unwrap();
         assert_eq!(list.len(), 2);
@@ -615,7 +662,14 @@ mod tests {
     fn test_delete_snapshot() {
         let mut db = SnapshotDb::in_memory().unwrap();
 
-        db.save_snapshot(&Snapshot::new("to-delete".to_string(), "XL".to_string(), 32, 96, 96)).unwrap();
+        db.save_snapshot(&Snapshot::new(
+            "to-delete".to_string(),
+            "XL".to_string(),
+            32,
+            96,
+            96,
+        ))
+        .unwrap();
         assert!(db.snapshot_exists("to-delete").unwrap());
 
         let deleted = db.delete_snapshot("to-delete").unwrap();

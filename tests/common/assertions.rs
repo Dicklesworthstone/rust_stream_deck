@@ -5,8 +5,7 @@ use tracing::error;
 
 #[must_use]
 pub fn assert_json_has_fields(json_str: &str, fields: &[&str]) -> serde_json::Value {
-    let value: serde_json::Value =
-        serde_json::from_str(json_str).expect("invalid JSON payload");
+    let value: serde_json::Value = serde_json::from_str(json_str).expect("invalid JSON payload");
     for field in fields {
         if !value.get(field).is_some() {
             error!(field, json = %value, "Missing expected JSON field");
@@ -17,11 +16,14 @@ pub fn assert_json_has_fields(json_str: &str, fields: &[&str]) -> serde_json::Va
 }
 
 pub fn assert_json_array_len(json_str: &str, len: usize) {
-    let value: serde_json::Value =
-        serde_json::from_str(json_str).expect("invalid JSON payload");
+    let value: serde_json::Value = serde_json::from_str(json_str).expect("invalid JSON payload");
     let array = value.as_array().expect("JSON value is not an array");
     if array.len() != len {
-        error!(expected = len, actual = array.len(), "Unexpected JSON array length");
+        error!(
+            expected = len,
+            actual = array.len(),
+            "Unexpected JSON array length"
+        );
         panic!("Expected array length {len}, got {}", array.len());
     }
 }
