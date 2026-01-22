@@ -6,6 +6,7 @@
 
 mod db;
 mod loader;
+mod path;
 mod schema;
 
 // Re-export schema types for use by other modules
@@ -21,3 +22,7 @@ pub use db::{PackageRow, ProfileDb};
 // Re-export loader types
 #[allow(unused_imports)] // Types are for future use
 pub use loader::ProfileLoader;
+
+// Re-export path helpers for declarative config support
+#[allow(unused_imports)] // Types are for future use
+pub use path::{home_dir, resolve_path, validate_image_path, PathResolver};

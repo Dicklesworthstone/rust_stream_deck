@@ -74,22 +74,21 @@ fn main() {
 }
 
 fn run(cli: &Cli, output: &dyn Output) -> Result<()> {
-    let _ = output;
     match &cli.command {
         None => print_quick_start(cli),
-        Some(Commands::List(args)) => cmd_list(cli, args),
-        Some(Commands::Info(args)) => cmd_info(cli, args),
-        Some(Commands::Brightness(args)) => cmd_brightness(cli, args),
-        Some(Commands::SetKey(args)) => cmd_set_key(cli, args),
+        Some(Commands::List(args)) => cmd_list(cli, args, output),
+        Some(Commands::Info(args)) => cmd_info(cli, args, output),
+        Some(Commands::Brightness(args)) => cmd_brightness(cli, args, output),
+        Some(Commands::SetKey(args)) => cmd_set_key(cli, args, output),
         Some(Commands::SetKeys(args)) => cmd_set_keys(cli, args),
-        Some(Commands::ClearKey(args)) => cmd_clear_key(cli, args),
-        Some(Commands::ClearAll(args)) => cmd_clear_all(cli, args),
-        Some(Commands::FillKey(args)) => cmd_fill_key(cli, args),
-        Some(Commands::FillAll(args)) => cmd_fill_all(cli, args),
+        Some(Commands::ClearKey(args)) => cmd_clear_key(cli, args, output),
+        Some(Commands::ClearAll(args)) => cmd_clear_all(cli, args, output),
+        Some(Commands::FillKey(args)) => cmd_fill_key(cli, args, output),
+        Some(Commands::FillAll(args)) => cmd_fill_all(cli, args, output),
         Some(Commands::FillKeys(args)) => cmd_fill_keys(cli, args),
         Some(Commands::ClearKeys(args)) => cmd_clear_keys(cli, args),
         Some(Commands::Watch(args)) => cmd_watch(cli, args),
-        Some(Commands::Read(args)) => cmd_read(cli, args),
+        Some(Commands::Read(args)) => cmd_read(cli, args, output),
         Some(Commands::Init(args)) => cmd_init(cli, args),
         Some(Commands::Config(args)) => cmd_config(cli, args),
         Some(Commands::Save(args)) => cmd_save(cli, args),
@@ -97,7 +96,7 @@ fn run(cli: &Cli, output: &dyn Output) -> Result<()> {
         Some(Commands::Snapshots(args)) => cmd_snapshots(cli, args),
         Some(Commands::Snapshot(args)) => cmd_snapshot(cli, args),
         Some(Commands::Serve(args)) => cmd_serve(cli, args),
-        Some(Commands::Version) => cmd_version(cli),
+        Some(Commands::Version) => cmd_version(cli, output),
         Some(Commands::Completions(args)) => cmd_completions(cli, args),
     }
 }
@@ -264,61 +263,21 @@ fn open_device(cli: &Cli) -> Result<device::Device> {
 
 // === Command Implementations ===
 
-fn cmd_list(cli: &Cli, args: &cli::ListArgs) -> Result<()> {
+fn cmd_list(cli: &Cli, _args: &cli::ListArgs, output: &dyn Output) -> Result<()> {
+    let _ = cli; // Will be used later for args.long formatting
     let devices = device::list_devices()?;
-
-    if cli.use_json() {
-        output_json(cli, &devices);
-    } else if devices.is_empty() {
-        println!("{}", "No Stream Deck devices found".yellow());
-        println!("Ensure device is connected via USB");
-    } else {
-        for d in &devices {
-            if args.long {
-                println!(
-                    "{}: {} ({} keys, {}x{} px)",
-                    d.serial.green(),
-                    d.product_name,
-                    d.key_count,
-                    d.key_width,
-                    d.key_height
-                );
-            } else {
-                println!("{}", d.serial);
-            }
-        }
-    }
+    output.device_list(&devices);
     Ok(())
 }
 
-fn cmd_info(cli: &Cli, _args: &cli::InfoArgs) -> Result<()> {
+fn cmd_info(cli: &Cli, _args: &cli::InfoArgs, output: &dyn Output) -> Result<()> {
     let device = open_device(cli)?;
     let info = device::get_device_info(&device);
-
-    if cli.use_json() {
-        output_json(cli, &info);
-    } else {
-        println!("{}: {}", "Product".bold(), info.product_name);
-        println!("{}: {}", "Serial".bold(), info.serial);
-        println!("{}: {}", "Firmware".bold(), info.firmware_version);
-        println!("{}: {}", "Keys".bold(), info.key_count);
-        println!(
-            "{}: {}x{} px",
-            "Key Size".bold(),
-            info.key_width,
-            info.key_height
-        );
-        println!(
-            "{}: {} cols x {} rows",
-            "Layout".bold(),
-            info.cols,
-            info.rows
-        );
-    }
+    output.device_info(&info);
     Ok(())
 }
 
-fn cmd_brightness(cli: &Cli, args: &cli::BrightnessArgs) -> Result<()> {
+fn cmd_brightness(cli: &Cli, args: &cli::BrightnessArgs, output: &dyn Output) -> Result<()> {
     if args.level > 100 {
         return Err(SdError::InvalidBrightness { value: args.level });
     }
@@ -329,36 +288,18 @@ fn cmd_brightness(cli: &Cli, args: &cli::BrightnessArgs) -> Result<()> {
     // Track state change
     state::record::brightness(args.level);
 
-    if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({ "brightness": args.level, "ok": true }),
-        );
-    } else if !cli.quiet {
-        println!("Brightness set to {}%", args.level);
-    }
+    output.brightness_set(args.level);
     Ok(())
 }
 
-fn cmd_set_key(cli: &Cli, args: &cli::SetKeyArgs) -> Result<()> {
+fn cmd_set_key(cli: &Cli, args: &cli::SetKeyArgs, output: &dyn Output) -> Result<()> {
     let device = open_device(cli)?;
     device::set_key_image(&device, args.key, &args.image)?;
 
     // Track state change
     state::record::set_key(args.key, args.image.clone());
 
-    if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({
-                "key": args.key,
-                "image": args.image.display().to_string(),
-                "ok": true
-            }),
-        );
-    } else if !cli.quiet {
-        println!("Key {} updated", args.key);
-    }
+    output.key_set(args.key, &args.image);
     Ok(())
 }
 
@@ -607,25 +548,18 @@ fn key_in_range(key: u8, range: &str) -> bool {
     true
 }
 
-fn cmd_clear_key(cli: &Cli, args: &cli::ClearKeyArgs) -> Result<()> {
+fn cmd_clear_key(cli: &Cli, args: &cli::ClearKeyArgs, output: &dyn Output) -> Result<()> {
     let device = open_device(cli)?;
     device::clear_key(&device, args.key)?;
 
     // Track state change
     state::record::clear_key(args.key);
 
-    if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({ "key": args.key, "cleared": true }),
-        );
-    } else if !cli.quiet {
-        println!("Key {} cleared", args.key);
-    }
+    output.key_cleared(args.key);
     Ok(())
 }
 
-fn cmd_clear_all(cli: &Cli, _args: &cli::ClearAllArgs) -> Result<()> {
+fn cmd_clear_all(cli: &Cli, _args: &cli::ClearAllArgs, output: &dyn Output) -> Result<()> {
     let device = open_device(cli)?;
     let info = device::get_device_info(&device);
     device::clear_all_keys(&device)?;
@@ -633,39 +567,24 @@ fn cmd_clear_all(cli: &Cli, _args: &cli::ClearAllArgs) -> Result<()> {
     // Track state change
     state::record::clear_all(info.key_count);
 
-    if cli.use_json() {
-        output_json(cli, &serde_json::json!({ "cleared": "all", "ok": true }));
-    } else if !cli.quiet {
-        println!("All keys cleared");
-    }
+    output.all_cleared();
     Ok(())
 }
 
-fn cmd_fill_key(cli: &Cli, args: &cli::FillKeyArgs) -> Result<()> {
+fn cmd_fill_key(cli: &Cli, args: &cli::FillKeyArgs, output: &dyn Output) -> Result<()> {
     let device = open_device(cli)?;
     let color = parse_color(&args.color)?;
     device::fill_key_color(&device, args.key, color)?;
 
     // Track state change
     let color_str = format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2);
-    state::record::fill_key(args.key, color_str);
+    state::record::fill_key(args.key, color_str.clone());
 
-    if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({
-                "key": args.key,
-                "color": format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2),
-                "ok": true
-            }),
-        );
-    } else if !cli.quiet {
-        println!("Key {} filled with #{}", args.key, args.color);
-    }
+    output.key_filled(args.key, &color_str);
     Ok(())
 }
 
-fn cmd_fill_all(cli: &Cli, args: &cli::FillAllArgs) -> Result<()> {
+fn cmd_fill_all(cli: &Cli, args: &cli::FillAllArgs, output: &dyn Output) -> Result<()> {
     let device = open_device(cli)?;
     let info = device::get_device_info(&device);
     let color = parse_color(&args.color)?;
@@ -677,18 +596,7 @@ fn cmd_fill_all(cli: &Cli, args: &cli::FillAllArgs) -> Result<()> {
         state::record::fill_key(key, color_str.clone());
     }
 
-    if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({
-                "filled": "all",
-                "color": format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2),
-                "ok": true
-            }),
-        );
-    } else if !cli.quiet {
-        println!("All keys filled with #{}", args.color);
-    }
+    output.all_filled(&color_str);
     Ok(())
 }
 
@@ -1137,26 +1045,10 @@ fn emit_watch_event(cli: &Cli, event: WatchConnectionEvent) {
     }
 }
 
-fn cmd_read(cli: &Cli, _args: &cli::ReadArgs) -> Result<()> {
+fn cmd_read(cli: &Cli, _args: &cli::ReadArgs, output: &dyn Output) -> Result<()> {
     let device = open_device(cli)?;
     let states = device::read_button_states(&device);
-
-    if cli.use_json() {
-        output_json(cli, &states);
-    } else {
-        let pressed: Vec<_> = states
-            .iter()
-            .enumerate()
-            .filter(|&(_, pressed)| *pressed)
-            .map(|(i, _)| i)
-            .collect();
-
-        if pressed.is_empty() {
-            println!("No buttons pressed");
-        } else {
-            println!("Pressed: {pressed:?}");
-        }
-    }
+    output.button_states(&states);
     Ok(())
 }
 
@@ -1649,34 +1541,17 @@ fn cmd_serve(cli: &Cli, args: &cli::ServeArgs) -> Result<()> {
 }
 
 #[allow(clippy::unnecessary_wraps)] // Consistent return type with other commands
-fn cmd_version(cli: &Cli) -> Result<()> {
-    if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({
-                "version": build_info::VERSION,
-                "git_sha": build_info::git_sha(),
-                "git_dirty": build_info::git_dirty() == "true",
-                "build_timestamp": build_info::build_timestamp(),
-                "rustc_version": build_info::rustc_semver(),
-                "target": build_info::target(),
-            }),
-        );
+fn cmd_version(_cli: &Cli, output: &dyn Output) -> Result<()> {
+    let git_sha = if build_info::git_dirty() == "true" {
+        format!("{} (dirty)", build_info::git_sha())
     } else {
-        println!("sd {}", build_info::VERSION);
-        println!(
-            "git: {}{}",
-            build_info::git_sha(),
-            if build_info::git_dirty() == "true" {
-                " (dirty)"
-            } else {
-                ""
-            }
-        );
-        println!("built: {}", build_info::build_timestamp());
-        println!("rustc: {}", build_info::rustc_semver());
-        println!("target: {}", build_info::target());
-    }
+        build_info::git_sha().to_string()
+    };
+    output.version_info(
+        build_info::VERSION,
+        Some(&git_sha),
+        Some(build_info::build_timestamp()),
+    );
     Ok(())
 }
 

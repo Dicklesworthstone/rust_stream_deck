@@ -39,6 +39,10 @@ pub struct Cli {
     #[arg(long, global = true, env = "NO_COLOR")]
     pub no_color: bool,
 
+    /// Preview what would happen without making changes
+    #[arg(long, short = 'n', global = true)]
+    pub dry_run: bool,
+
     /// Target device by serial number (required if multiple devices connected)
     #[arg(long, short = 's', global = true, env = "SD_SERIAL")]
     pub serial: Option<String>,
@@ -94,6 +98,14 @@ impl Cli {
     /// Returns true if retry is enabled.
     pub const fn retry_enabled(&self) -> bool {
         self.retry > 0
+    }
+
+    /// Returns true if dry-run mode is enabled.
+    ///
+    /// When dry-run is enabled, commands should show what would happen
+    /// without actually making changes to the device.
+    pub const fn is_dry_run(&self) -> bool {
+        self.dry_run
     }
 
     /// Build connection options from CLI flags.

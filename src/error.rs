@@ -39,6 +39,9 @@ pub enum SdError {
     #[error("Image file not found: {path}")]
     ImageNotFound { path: String },
 
+    #[error("Unsupported image format: {0}")]
+    ImageFormat(String),
+
     // Key errors
     #[error("Invalid key index {index}: device has {max} keys (0-{max_idx})")]
     InvalidKeyIndex { index: u8, max: u8, max_idx: u8 },
@@ -49,6 +52,9 @@ pub enum SdError {
 
     #[error("Configuration parse error: {0}")]
     ConfigParse(String),
+
+    #[error("Invalid configuration: {0}")]
+    ConfigInvalid(String),
 
     #[error("Invalid brightness value {value}: must be 0-100")]
     InvalidBrightness { value: u8 },
@@ -86,13 +92,17 @@ impl SdError {
             Self::InvalidImageDimensions { .. }
                 | Self::ImageProcessing(_)
                 | Self::ImageNotFound { .. }
+                | Self::ImageFormat(_)
         )
     }
 
     /// Returns true if the error is related to config parsing/availability.
     #[allow(dead_code)]
     pub const fn is_config_error(&self) -> bool {
-        matches!(self, Self::ConfigNotFound { .. } | Self::ConfigParse(_))
+        matches!(
+            self,
+            Self::ConfigNotFound { .. } | Self::ConfigParse(_) | Self::ConfigInvalid(_)
+        )
     }
 
     /// Returns true if retrying might resolve the error.
@@ -111,7 +121,9 @@ impl SdError {
                 | Self::InvalidKeyIndex { .. }
                 | Self::InvalidBrightness { .. }
                 | Self::ImageNotFound { .. }
+                | Self::ImageFormat(_)
                 | Self::ConfigNotFound { .. }
+                | Self::ConfigInvalid(_)
         )
     }
 
@@ -122,6 +134,12 @@ impl SdError {
             Self::MultipleDevices { .. } => Some("Use --serial to specify which device"),
             Self::InvalidBrightness { .. } => Some("Use a value between 0 and 100"),
             Self::ConfigNotFound { .. } => Some("Run: sd init"),
+            Self::ImageFormat { .. } | Self::ImageFormat(_) => {
+                Some("Use a supported image format: png, jpg, jpeg, gif, bmp, webp")
+            }
+            Self::ConfigInvalid { .. } | Self::ConfigInvalid(_) => {
+                Some("Check configuration values for validity")
+            }
             _ => None,
         }
     }
