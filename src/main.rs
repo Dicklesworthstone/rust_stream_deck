@@ -22,6 +22,7 @@ use image::GenericImageView;
 use serde::Serialize;
 
 use cli::{Cli, Commands};
+use device::DeviceOperations;
 use error::{Result, SdError};
 use output::{
     BrightnessDryRunDetails, ClearAllDryRunDetails, ClearKeyDryRunDetails, ClearKeysDryRunDetails,
@@ -968,8 +969,14 @@ fn cmd_clear_key_dry_run(cli: &Cli, args: &cli::ClearKeyArgs) -> Result<()> {
         let response = if errors.is_empty() {
             DryRunResponse::success("clear_key", details, device_ctx).with_warnings(warnings)
         } else {
-            DryRunResponse::failure("clear_key", "Validation failed", errors, details, device_ctx)
-                .with_warnings(warnings)
+            DryRunResponse::failure(
+                "clear_key",
+                "Validation failed",
+                errors,
+                details,
+                device_ctx,
+            )
+            .with_warnings(warnings)
         };
 
         output_json(cli, &response);
@@ -1138,7 +1145,10 @@ fn cmd_fill_key_dry_run(cli: &Cli, args: &cli::FillKeyArgs) -> Result<()> {
         output_json(cli, &response);
     } else {
         // Human-readable dry-run output
-        println!("DRY RUN: Would fill key {} with color {}", args.key, color_str);
+        println!(
+            "DRY RUN: Would fill key {} with color {}",
+            args.key, color_str
+        );
         println!("  RGB: ({}, {}, {})", color.0, color.1, color.2);
 
         match device_result {
@@ -1415,7 +1425,8 @@ fn cmd_clear_keys_dry_run(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
         let key_count = device_info.as_ref().map(|i| i.key_count).unwrap_or(32);
 
         // Resolve key selection
-        let keys_result = resolve_key_selection(args.all, args.range.as_deref(), &args.keys, key_count);
+        let keys_result =
+            resolve_key_selection(args.all, args.range.as_deref(), &args.keys, key_count);
 
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
@@ -1432,15 +1443,25 @@ fn cmd_clear_keys_dry_run(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
                     errors.push(ValidationError {
                         field: "keys".to_string(),
                         error: "No keys specified".to_string(),
-                        suggestion: Some("Use --all, --range, or --keys to specify which keys to clear".to_string()),
+                        suggestion: Some(
+                            "Use --all, --range, or --keys to specify which keys to clear"
+                                .to_string(),
+                        ),
                     });
                     let details = ClearKeysDryRunDetails::new(vec![]);
-                    let response = DryRunResponse::failure("clear_keys", "No keys specified", errors, details, device_ctx)
-                        .with_warnings(warnings);
+                    let response = DryRunResponse::failure(
+                        "clear_keys",
+                        "No keys specified",
+                        errors,
+                        details,
+                        device_ctx,
+                    )
+                    .with_warnings(warnings);
                     output_json(cli, &response);
                 } else {
                     let details = ClearKeysDryRunDetails::new(keys);
-                    let response = DryRunResponse::success("clear_keys", details, device_ctx).with_warnings(warnings);
+                    let response = DryRunResponse::success("clear_keys", details, device_ctx)
+                        .with_warnings(warnings);
                     output_json(cli, &response);
                 }
             }
@@ -1451,8 +1472,14 @@ fn cmd_clear_keys_dry_run(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
                     suggestion: Some("Check the key range or indices specified".to_string()),
                 });
                 let details = ClearKeysDryRunDetails::new(vec![]);
-                let response = DryRunResponse::failure("clear_keys", "Invalid key selection", errors, details, device_ctx)
-                    .with_warnings(warnings);
+                let response = DryRunResponse::failure(
+                    "clear_keys",
+                    "Invalid key selection",
+                    errors,
+                    details,
+                    device_ctx,
+                )
+                .with_warnings(warnings);
                 output_json(cli, &response);
             }
         }
@@ -1461,15 +1488,25 @@ fn cmd_clear_keys_dry_run(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
         match device_result {
             Ok(device) => {
                 let info = device::get_device_info(&device);
-                let keys_result = resolve_key_selection(args.all, args.range.as_deref(), &args.keys, info.key_count);
+                let keys_result = resolve_key_selection(
+                    args.all,
+                    args.range.as_deref(),
+                    &args.keys,
+                    info.key_count,
+                );
 
                 match keys_result {
                     Ok(keys) => {
                         if keys.is_empty() {
                             println!("DRY RUN: No keys specified");
-                            println!("  Use --all, --range, or --keys to specify which keys to clear");
+                            println!(
+                                "  Use --all, --range, or --keys to specify which keys to clear"
+                            );
                         } else if args.all {
-                            println!("DRY RUN: Would clear all {} keys (set to black)", info.key_count);
+                            println!(
+                                "DRY RUN: Would clear all {} keys (set to black)",
+                                info.key_count
+                            );
                         } else {
                             println!("DRY RUN: Would clear {} keys: {:?}", keys.len(), keys);
                         }
@@ -1605,10 +1642,7 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs, output: &dyn Output) -> Result<()
                     && reconnect_attempts > args.max_reconnect_attempts
                 {
                     // Emit final disconnect event
-                    output.warning(&format!(
-                        "Disconnected: {} (reconnecting: false)",
-                        e
-                    ));
+                    output.warning(&format!("Disconnected: {} (reconnecting: false)", e));
 
                     if !cli.quiet && !cli.use_json() {
                         output.warning(&format!(
