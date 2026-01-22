@@ -14,11 +14,11 @@ mod snapshot;
 mod state;
 mod theme;
 
-use std::io::{self, IsTerminal};
+use std::io;
 
 use clap::Parser;
-use colored::Colorize;
 use image::GenericImageView;
+use rich_rust::prelude::{Color, Console, Style, Text};
 use serde::Serialize;
 
 use cli::{Cli, Commands};
@@ -62,10 +62,7 @@ fn main() {
     // Initialize structured logging based on CLI flags
     logging::init_logging(cli.use_json(), cli.verbose, cli.quiet);
 
-    // Handle no-color flag or non-TTY
-    if cli.no_color || !io::stdout().is_terminal() {
-        colored::control::set_override(false);
-    }
+    // Note: no-color handling is now managed by rich_rust through OutputMode
 
     // Prepare output handler
     let output = OutputMode::from_cli(&cli).into_output();
@@ -160,42 +157,63 @@ fn print_robot_quick_start() {
 }
 
 fn print_human_quick_start() {
-    println!(
-        "{} {} - Stream Deck CLI\n",
-        "sd".bold().cyan(),
-        build_info::VERSION
-    );
+    let console = Console::new();
+    let accent = Color::parse("#0080FF").expect("valid color");
+    let success = Color::parse("#00D26A").expect("valid color");
+    let warning = Color::parse("#FFA502").expect("valid color");
 
-    println!("{}", "QUICK START".bold().underline());
-    println!();
+    // Title line
+    let mut title = Text::new("");
+    title.append_styled("sd", Style::new().bold().color(accent.clone()));
+    title.append(&format!(" {} - Stream Deck CLI\n", build_info::VERSION));
+    console.print_text(&title);
 
-    println!("  {}  List devices", "sd list".green());
-    println!("  {}  Device info", "sd info".green());
-    println!("  {}  Set brightness", "sd brightness 80".green());
-    println!("  {}  Set key image", "sd set-key 0 icon.png".green());
-    println!("  {}  Fill key with color", "sd fill-key 0 ff0000".green());
-    println!("  {}  Clear all keys", "sd clear-all".green());
-    println!("  {}  Watch button presses", "sd watch".green());
-    println!();
+    // QUICK START section
+    console.print_styled("QUICK START", Style::new().bold().underline());
+    console.print("");
 
-    println!("{}", "ROBOT MODE (for AI agents)".bold().underline());
-    println!();
-    println!("  {}  JSON output", "sd --robot <command>".cyan());
-    println!("  {}  Quick-start JSON", "sd --robot".cyan());
-    println!();
+    let cmd_style = Style::new().color(success.clone());
+    console.print_styled("  sd list                 ", cmd_style.clone());
+    console.print("List devices");
+    console.print_styled("  sd info                 ", cmd_style.clone());
+    console.print("Device info");
+    console.print_styled("  sd brightness 80        ", cmd_style.clone());
+    console.print("Set brightness");
+    console.print_styled("  sd set-key 0 icon.png   ", cmd_style.clone());
+    console.print("Set key image");
+    console.print_styled("  sd fill-key 0 ff0000    ", cmd_style.clone());
+    console.print("Fill key with color");
+    console.print_styled("  sd clear-all            ", cmd_style.clone());
+    console.print("Clear all keys");
+    console.print_styled("  sd watch                ", cmd_style);
+    console.print("Watch button presses");
+    console.print("");
 
-    println!(
-        "{}",
-        "KEY LAYOUT (Stream Deck XL 32-key)".bold().underline()
-    );
-    println!();
-    println!("  Row 0: [0] [1] [2] [3] [4] [5] [6] [7]");
-    println!("  Row 1: [8] [9] [10][11][12][13][14][15]");
-    println!("  Row 2: [16][17][18][19][20][21][22][23]");
-    println!("  Row 3: [24][25][26][27][28][29][30][31]");
-    println!();
+    // ROBOT MODE section
+    console.print_styled("ROBOT MODE (for AI agents)", Style::new().bold().underline());
+    console.print("");
 
-    println!("Run {} for full help", "sd --help".yellow());
+    let robot_style = Style::new().color(accent.clone());
+    console.print_styled("  sd --robot <command>    ", robot_style.clone());
+    console.print("JSON output");
+    console.print_styled("  sd --robot              ", robot_style);
+    console.print("Quick-start JSON");
+    console.print("");
+
+    // KEY LAYOUT section
+    console.print_styled("KEY LAYOUT (Stream Deck XL 32-key)", Style::new().bold().underline());
+    console.print("");
+    console.print("  Row 0: [0] [1] [2] [3] [4] [5] [6] [7]");
+    console.print("  Row 1: [8] [9] [10][11][12][13][14][15]");
+    console.print("  Row 2: [16][17][18][19][20][21][22][23]");
+    console.print("  Row 3: [24][25][26][27][28][29][30][31]");
+    console.print("");
+
+    // Help hint
+    let mut help = Text::new("Run ");
+    help.append_styled("sd --help", Style::new().color(warning));
+    help.append(" for full help");
+    console.print_text(&help);
 }
 
 // === Robot Mode JSON Structures ===
@@ -1891,22 +1909,28 @@ fn cmd_snapshots(cli: &Cli, args: &cli::SnapshotsArgs) -> Result<()> {
         println!("No snapshots saved");
         println!("Use 'sd save <name>' to save the current device state");
     } else {
+        let console = Console::new();
+        let success = Color::parse("#00D26A").expect("valid color");
+        let muted = Color::parse("#747D8C").expect("valid color");
+
         for snap in &snapshots {
             if args.long {
-                println!(
-                    "{}: {} ({} keys{})",
-                    snap.name.green(),
+                let mut line = Text::new("");
+                line.append_styled(&snap.name, Style::new().color(success.clone()));
+                line.append(&format!(
+                    ": {} ({} keys{})",
                     snap.device_model,
                     snap.key_count,
                     snap.brightness
                         .map_or(String::new(), |b| format!(", {b}% brightness"))
-                );
+                ));
+                console.print_text(&line);
                 if let Some(ref desc) = snap.description {
-                    println!("  {}", desc.dimmed());
+                    console.print_styled(&format!("  {desc}"), Style::new().color(muted.clone()));
                 }
-                println!("  Created: {}", snap.created_at.format("%Y-%m-%d %H:%M"));
+                console.print(&format!("  Created: {}", snap.created_at.format("%Y-%m-%d %H:%M")));
             } else {
-                println!("{}", snap.name);
+                console.print(&snap.name);
             }
         }
     }
@@ -1933,40 +1957,64 @@ fn cmd_snapshot_show(cli: &Cli, args: &cli::SnapshotShowArgs) -> Result<()> {
     if cli.use_json() {
         output_json(cli, &snap);
     } else {
-        println!("{}", "Snapshot Details".bold().underline());
-        println!();
-        println!("{}: {}", "Name".bold(), snap.name);
+        let console = Console::new();
+        let bold = Style::new().bold();
+
+        console.print_styled("Snapshot Details", Style::new().bold().underline());
+        console.print("");
+
+        let mut line = Text::new("");
+        line.append_styled("Name", bold.clone());
+        line.append(&format!(": {}", snap.name));
+        console.print_text(&line);
+
         if let Some(ref desc) = snap.description {
-            println!("{}: {}", "Description".bold(), desc);
+            let mut line = Text::new("");
+            line.append_styled("Description", bold.clone());
+            line.append(&format!(": {desc}"));
+            console.print_text(&line);
         }
-        println!("{}: {}", "Device".bold(), snap.device_model);
+
+        let mut line = Text::new("");
+        line.append_styled("Device", bold.clone());
+        line.append(&format!(": {}", snap.device_model));
+        console.print_text(&line);
+
         if let Some(ref serial) = snap.device_serial {
-            println!("{}: {}", "Serial".bold(), serial);
+            let mut line = Text::new("");
+            line.append_styled("Serial", bold.clone());
+            line.append(&format!(": {serial}"));
+            console.print_text(&line);
         }
-        println!(
-            "{}: {} ({}x{} px)",
-            "Keys".bold(),
-            snap.key_count,
-            snap.key_width,
-            snap.key_height
-        );
+
+        let mut line = Text::new("");
+        line.append_styled("Keys", bold.clone());
+        line.append(&format!(
+            ": {} ({}x{} px)",
+            snap.key_count, snap.key_width, snap.key_height
+        ));
+        console.print_text(&line);
+
         if let Some(brightness) = snap.brightness {
-            println!("{}: {}%", "Brightness".bold(), brightness);
+            let mut line = Text::new("");
+            line.append_styled("Brightness", bold.clone());
+            line.append(&format!(": {brightness}%"));
+            console.print_text(&line);
         }
-        println!(
-            "{}: {}",
-            "Created".bold(),
-            snap.created_at.format("%Y-%m-%d %H:%M:%S")
-        );
-        println!(
-            "{}: {}",
-            "Updated".bold(),
-            snap.updated_at.format("%Y-%m-%d %H:%M:%S")
-        );
+
+        let mut line = Text::new("");
+        line.append_styled("Created", bold.clone());
+        line.append(&format!(": {}", snap.created_at.format("%Y-%m-%d %H:%M:%S")));
+        console.print_text(&line);
+
+        let mut line = Text::new("");
+        line.append_styled("Updated", bold.clone());
+        line.append(&format!(": {}", snap.updated_at.format("%Y-%m-%d %H:%M:%S")));
+        console.print_text(&line);
 
         if !snap.keys.is_empty() {
-            println!();
-            println!("{}", "Keys:".bold());
+            console.print("");
+            console.print_styled("Keys:", bold);
             for key in &snap.keys {
                 let state_desc = match &key.state {
                     snapshot::KeyState::Image {
@@ -1986,7 +2034,7 @@ fn cmd_snapshot_show(cli: &Cli, args: &cli::SnapshotShowArgs) -> Result<()> {
                     snapshot::KeyState::Color { hex } => format!("color: {hex}"),
                     snapshot::KeyState::Clear => "cleared".to_string(),
                 };
-                println!("  Key {}: {}", key.key_index, state_desc);
+                console.print(&format!("  Key {}: {}", key.key_index, state_desc));
             }
         }
     }
@@ -2008,11 +2056,13 @@ fn cmd_snapshot_delete(cli: &Cli, args: &cli::SnapshotDeleteArgs) -> Result<()> 
 
     // Confirm deletion if not forced and not in robot mode
     if !args.force && !cli.use_json() {
-        println!(
-            "{}",
-            format!("Delete snapshot '{}'? This cannot be undone.", args.name).yellow()
+        let console = Console::new();
+        let warning = Color::parse("#FFA502").expect("valid color");
+        console.print_styled(
+            &format!("Delete snapshot '{}'? This cannot be undone.", args.name),
+            Style::new().color(warning),
         );
-        println!("Use --force to skip this prompt");
+        console.print("Use --force to skip this prompt");
         return Ok(());
     }
 
