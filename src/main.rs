@@ -92,7 +92,7 @@ fn run(cli: &Cli, output: &dyn Output) -> Result<()> {
         Some(Commands::FillAll(args)) => cmd_fill_all(cli, args, output),
         Some(Commands::FillKeys(args)) => cmd_fill_keys(cli, args),
         Some(Commands::ClearKeys(args)) => cmd_clear_keys(cli, args),
-        Some(Commands::Watch(args)) => cmd_watch(cli, args),
+        Some(Commands::Watch(args)) => cmd_watch(cli, args, output),
         Some(Commands::Read(args)) => cmd_read(cli, args, output),
         Some(Commands::Init(args)) => cmd_init(cli, args),
         Some(Commands::Config(args)) => cmd_config(cli, args),
@@ -1573,14 +1573,14 @@ const MAX_RECONNECT_DELAY_MS: u64 = 30_000;
 /// Backoff multiplier for exponential backoff.
 const RECONNECT_BACKOFF_FACTOR: f64 = 1.5;
 
-fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
+fn cmd_watch(cli: &Cli, args: &cli::WatchArgs, output: &dyn Output) -> Result<()> {
     let mut device = open_device(cli)?;
     let serial = cli.serial.clone();
 
     if !cli.quiet && !cli.use_json() {
-        println!("Watching for button presses (Ctrl+C to stop)...");
+        output.info("Watching for button presses (Ctrl+C to stop)...");
         if args.reconnect {
-            println!("Auto-reconnect enabled");
+            output.info("Auto-reconnect enabled");
         }
     }
 
@@ -1589,8 +1589,8 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
     let mut reconnect_delay = args.reconnect_delay;
 
     loop {
-        // Try to watch for events
-        let result = device::watch_buttons(&device, cli.use_json(), args.once, args.timeout);
+        // Try to watch for events using the output trait
+        let result = watch_buttons_with_output(&device, output, args.once, args.timeout);
 
         match result {
             Ok(()) => {
@@ -1605,19 +1605,16 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
                     && reconnect_attempts > args.max_reconnect_attempts
                 {
                     // Emit final disconnect event
-                    emit_watch_event(
-                        cli,
-                        WatchConnectionEvent::Disconnected {
-                            reason: e.to_string(),
-                            reconnecting: false,
-                        },
-                    );
+                    output.warning(&format!(
+                        "Disconnected: {} (reconnecting: false)",
+                        e
+                    ));
 
                     if !cli.quiet && !cli.use_json() {
-                        eprintln!(
+                        output.warning(&format!(
                             "Max reconnection attempts ({}) exceeded",
                             args.max_reconnect_attempts
-                        );
+                        ));
                     }
                     return Err(SdError::Other(format!(
                         "Connection lost after {} reconnection attempts: {}",
@@ -1627,36 +1624,17 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
                 }
 
                 // Emit disconnect event
-                emit_watch_event(
-                    cli,
-                    WatchConnectionEvent::Disconnected {
-                        reason: e.to_string(),
-                        reconnecting: true,
-                    },
-                );
-
-                if !cli.quiet && !cli.use_json() {
-                    eprintln!(
-                        "Connection lost ({}), reconnecting in {}ms (attempt {}{})...",
-                        e,
-                        reconnect_delay,
-                        reconnect_attempts,
-                        if args.max_reconnect_attempts > 0 {
-                            format!("/{}", args.max_reconnect_attempts)
-                        } else {
-                            String::new()
-                        }
-                    );
-                }
-
-                // Emit reconnecting event
-                emit_watch_event(
-                    cli,
-                    WatchConnectionEvent::Reconnecting {
-                        attempt: reconnect_attempts,
-                        delay_ms: reconnect_delay,
-                    },
-                );
+                output.warning(&format!(
+                    "Connection lost ({}), reconnecting in {}ms (attempt {}{})...",
+                    e,
+                    reconnect_delay,
+                    reconnect_attempts,
+                    if args.max_reconnect_attempts > 0 {
+                        format!("/{}", args.max_reconnect_attempts)
+                    } else {
+                        String::new()
+                    }
+                ));
 
                 // Wait before reconnecting
                 std::thread::sleep(std::time::Duration::from_millis(reconnect_delay));
@@ -1667,16 +1645,10 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
                         device = new_device;
 
                         // Emit reconnected event
-                        emit_watch_event(
-                            cli,
-                            WatchConnectionEvent::Reconnected {
-                                attempt: reconnect_attempts,
-                            },
-                        );
-
-                        if !cli.quiet && !cli.use_json() {
-                            println!("Reconnected successfully");
-                        }
+                        output.success(&format!(
+                            "Reconnected successfully (attempt {})",
+                            reconnect_attempts
+                        ));
 
                         // Reset backoff on successful connection
                         reconnect_delay = args.reconnect_delay;
@@ -1703,6 +1675,76 @@ fn cmd_watch(cli: &Cli, args: &cli::WatchArgs) -> Result<()> {
             }
         }
     }
+}
+
+/// Watch for button presses using the Output trait.
+///
+/// This function provides the watch loop that uses the Output trait
+/// for all button event reporting, enabling both robot and human modes.
+fn watch_buttons_with_output(
+    device: &device::Device,
+    output: &dyn Output,
+    once: bool,
+    timeout_secs: u64,
+) -> Result<()> {
+    use std::time::{Duration, Instant};
+
+    let start = Instant::now();
+    let timeout = if timeout_secs == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(timeout_secs))
+    };
+
+    // We need to access device internals - use the existing watch function
+    // but intercept events. For now, delegate to read_button_states in a loop.
+    let mut last_states = vec![false; device.info().key_count as usize];
+
+    loop {
+        // Check timeout
+        if let Some(t) = timeout {
+            if start.elapsed() >= t {
+                break;
+            }
+        }
+
+        // Read current states
+        let states = device::read_button_states(device);
+
+        // Detect changes
+        for (key, (&current, &previous)) in states.iter().zip(last_states.iter()).enumerate() {
+            if current && !previous {
+                // Button pressed
+                #[allow(clippy::cast_possible_truncation)]
+                let event = device::ButtonEvent {
+                    key: key as u8,
+                    pressed: true,
+                    timestamp_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                };
+                output.button_event(&event);
+
+                if once {
+                    return Ok(());
+                }
+            } else if !current && previous {
+                // Button released
+                #[allow(clippy::cast_possible_truncation)]
+                let event = device::ButtonEvent {
+                    key: key as u8,
+                    pressed: false,
+                    timestamp_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                };
+                output.button_event(&event);
+            }
+        }
+
+        last_states = states;
+
+        // Small sleep to avoid busy-waiting
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    Ok(())
 }
 
 /// Connection events emitted during watch with reconnect.
