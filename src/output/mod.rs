@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use rich_rust::prelude::Console;
+use serde::Serialize;
 
 use crate::cli::Cli;
 use crate::device::{ButtonEvent, DeviceInfo};
@@ -20,6 +21,128 @@ pub use dry_run::{
 };
 pub use human::HumanOutput;
 pub use robot::RobotOutput;
+
+// === Batch Operation Result Types ===
+
+/// Result of a single key operation in a batch.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchKeyResult {
+    pub key: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl BatchKeyResult {
+    /// Create a successful result for a set-key operation.
+    #[must_use]
+    pub fn set_key_success(key: u8, path: &Path) -> Self {
+        Self {
+            key,
+            path: Some(path.display().to_string()),
+            color: None,
+            ok: true,
+            error: None,
+        }
+    }
+
+    /// Create a failed result for a set-key operation.
+    #[must_use]
+    pub fn set_key_failure(key: u8, path: &Path, error: &str) -> Self {
+        Self {
+            key,
+            path: Some(path.display().to_string()),
+            color: None,
+            ok: false,
+            error: Some(error.to_string()),
+        }
+    }
+
+    /// Create a successful result for a clear-key operation.
+    #[must_use]
+    pub fn clear_success(key: u8) -> Self {
+        Self {
+            key,
+            path: None,
+            color: None,
+            ok: true,
+            error: None,
+        }
+    }
+
+    /// Create a failed result for a clear-key operation.
+    #[must_use]
+    pub fn clear_failure(key: u8, error: &str) -> Self {
+        Self {
+            key,
+            path: None,
+            color: None,
+            ok: false,
+            error: Some(error.to_string()),
+        }
+    }
+
+    /// Create a successful result for a fill-key operation.
+    #[must_use]
+    pub fn fill_success(key: u8, color: &str) -> Self {
+        Self {
+            key,
+            path: None,
+            color: Some(color.to_string()),
+            ok: true,
+            error: None,
+        }
+    }
+
+    /// Create a failed result for a fill-key operation.
+    #[must_use]
+    pub fn fill_failure(key: u8, color: &str, error: &str) -> Self {
+        Self {
+            key,
+            path: None,
+            color: Some(color.to_string()),
+            ok: false,
+            error: Some(error.to_string()),
+        }
+    }
+}
+
+/// Summary statistics for a batch operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchSummary {
+    pub total: usize,
+    pub success: usize,
+    pub failed: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<usize>,
+}
+
+impl BatchSummary {
+    #[must_use]
+    pub fn new(total: usize, success: usize, failed: usize) -> Self {
+        Self {
+            total,
+            success,
+            failed,
+            skipped: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_skipped(mut self, skipped: usize) -> Self {
+        self.skipped = Some(skipped);
+        self
+    }
+
+    #[must_use]
+    pub fn is_success(&self) -> bool {
+        self.failed == 0
+    }
+}
 
 /// JSON formatting options for robot mode.
 #[derive(Debug, Clone, Copy)]
@@ -107,4 +230,14 @@ pub trait Output {
     // Visual separators
     fn rule(&self, title: Option<&str>);
     fn newline(&self);
+
+    // Batch operations
+    /// Output results of a batch set-keys operation.
+    fn batch_set_keys(&self, results: &[BatchKeyResult], summary: &BatchSummary);
+
+    /// Output results of a batch fill-keys operation.
+    fn batch_fill_keys(&self, color: &str, results: &[BatchKeyResult], summary: &BatchSummary);
+
+    /// Output results of a batch clear-keys operation.
+    fn batch_clear_keys(&self, results: &[BatchKeyResult], summary: &BatchSummary);
 }

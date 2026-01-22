@@ -10,7 +10,7 @@ use crate::device::{ButtonEvent, DeviceInfo};
 use crate::error::SdError;
 use crate::theme::SdTheme;
 
-use super::Output;
+use super::{BatchKeyResult, BatchSummary, Output};
 
 /// Styled terminal output implementation for human users.
 pub struct HumanOutput {
@@ -310,5 +310,103 @@ impl Output for HumanOutput {
     #[instrument(skip(self))]
     fn newline(&self) {
         self.console.print("");
+    }
+
+    #[instrument(skip(self, results, summary), fields(total = summary.total, success = summary.success))]
+    fn batch_set_keys(&self, results: &[BatchKeyResult], summary: &BatchSummary) {
+        debug!("Outputting batch set-keys results");
+
+        // Show per-key results
+        for result in results {
+            if result.ok {
+                if let Some(ref path) = result.path {
+                    let filename = Path::new(path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone());
+                    self.console
+                        .print(&format!("  Key {}: {}", result.key, filename));
+                }
+            } else if let Some(ref err) = result.error {
+                let mut text = Text::new("");
+                text.append_styled(
+                    &format!("  Key {}: ", result.key),
+                    Style::new().color(self.theme.error.clone()),
+                );
+                text.append_styled(err, Style::new().color(self.theme.muted.clone()));
+                self.console.print_text(&text);
+            }
+        }
+
+        // Show summary
+        if summary.failed == 0 {
+            self.success(&format!("Set {} keys", summary.success));
+        } else {
+            self.warning(&format!(
+                "Set {} keys ({} errors)",
+                summary.success, summary.failed
+            ));
+        }
+    }
+
+    #[instrument(skip(self, results, summary), fields(total = summary.total, success = summary.success))]
+    fn batch_fill_keys(&self, color: &str, results: &[BatchKeyResult], summary: &BatchSummary) {
+        debug!(color, "Outputting batch fill-keys results");
+
+        // Show per-key results
+        for result in results {
+            if result.ok {
+                self.console
+                    .print(&format!("  Key {}: filled with {}", result.key, color));
+            } else if let Some(ref err) = result.error {
+                let mut text = Text::new("");
+                text.append_styled(
+                    &format!("  Key {}: ", result.key),
+                    Style::new().color(self.theme.error.clone()),
+                );
+                text.append_styled(err, Style::new().color(self.theme.muted.clone()));
+                self.console.print_text(&text);
+            }
+        }
+
+        // Show summary
+        if summary.failed == 0 {
+            self.success(&format!("Filled {} keys with {}", summary.success, color));
+        } else {
+            self.warning(&format!(
+                "Filled {} keys with {} ({} errors)",
+                summary.success, color, summary.failed
+            ));
+        }
+    }
+
+    #[instrument(skip(self, results, summary), fields(total = summary.total, success = summary.success))]
+    fn batch_clear_keys(&self, results: &[BatchKeyResult], summary: &BatchSummary) {
+        debug!("Outputting batch clear-keys results");
+
+        // Show per-key results
+        for result in results {
+            if result.ok {
+                self.console.print(&format!("  Key {}: cleared", result.key));
+            } else if let Some(ref err) = result.error {
+                let mut text = Text::new("");
+                text.append_styled(
+                    &format!("  Key {}: ", result.key),
+                    Style::new().color(self.theme.error.clone()),
+                );
+                text.append_styled(err, Style::new().color(self.theme.muted.clone()));
+                self.console.print_text(&text);
+            }
+        }
+
+        // Show summary
+        if summary.failed == 0 {
+            self.success(&format!("Cleared {} keys", summary.success));
+        } else {
+            self.warning(&format!(
+                "Cleared {} keys ({} errors)",
+                summary.success, summary.failed
+            ));
+        }
     }
 }

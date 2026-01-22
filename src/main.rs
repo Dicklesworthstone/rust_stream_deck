@@ -25,9 +25,10 @@ use cli::{Cli, Commands};
 use device::DeviceOperations;
 use error::{Result, SdError};
 use output::{
-    BrightnessDryRunDetails, ClearAllDryRunDetails, ClearKeyDryRunDetails, ClearKeysDryRunDetails,
-    DeviceContext, DryRunResponse, FillKeyDryRunDetails, ImageSourceInfo, Output, OutputMode,
-    ProcessingInfo, SetKeyDryRunDetails, ValidationError,
+    BatchKeyResult, BatchSummary, BrightnessDryRunDetails, ClearAllDryRunDetails,
+    ClearKeyDryRunDetails, ClearKeysDryRunDetails, DeviceContext, DryRunResponse,
+    FillKeyDryRunDetails, ImageSourceInfo, Output, OutputMode, ProcessingInfo, SetKeyDryRunDetails,
+    ValidationError,
 };
 
 /// Build information embedded at compile time.
@@ -86,13 +87,13 @@ fn run(cli: &Cli, output: &dyn Output) -> Result<()> {
         Some(Commands::Info(args)) => cmd_info(cli, args, output),
         Some(Commands::Brightness(args)) => cmd_brightness(cli, args, output),
         Some(Commands::SetKey(args)) => cmd_set_key(cli, args, output),
-        Some(Commands::SetKeys(args)) => cmd_set_keys(cli, args),
+        Some(Commands::SetKeys(args)) => cmd_set_keys(cli, args, output),
         Some(Commands::ClearKey(args)) => cmd_clear_key(cli, args, output),
         Some(Commands::ClearAll(args)) => cmd_clear_all(cli, args, output),
         Some(Commands::FillKey(args)) => cmd_fill_key(cli, args, output),
         Some(Commands::FillAll(args)) => cmd_fill_all(cli, args, output),
-        Some(Commands::FillKeys(args)) => cmd_fill_keys(cli, args),
-        Some(Commands::ClearKeys(args)) => cmd_clear_keys(cli, args),
+        Some(Commands::FillKeys(args)) => cmd_fill_keys(cli, args, output),
+        Some(Commands::ClearKeys(args)) => cmd_clear_keys(cli, args, output),
         Some(Commands::Watch(args)) => cmd_watch(cli, args, output),
         Some(Commands::Read(args)) => cmd_read(cli, args, output),
         Some(Commands::Init(args)) => cmd_init(cli, args),
@@ -531,7 +532,7 @@ fn analyze_image_source(path: &std::path::Path) -> ImageSourceInfo {
 }
 
 #[allow(clippy::too_many_lines)] // Batch operations are inherently complex
-fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
+fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs, output: &dyn Output) -> Result<()> {
     // Open device to get key count
     let device = open_device(cli)?;
     let device_info = device::get_device_info(&device);
@@ -547,35 +548,22 @@ fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
 
     // Check if we have any files to process
     if scan_result.mappings.is_empty() {
-        if cli.use_json() {
-            output_json(
-                cli,
-                &serde_json::json!({
-                    "ok": false,
-                    "error": "no_matching_files",
-                    "message": format!("No files matching pattern '{}' found in {}", args.pattern, args.dir.display()),
-                    "unmatched_count": scan_result.unmatched.len(),
-                    "invalid_count": scan_result.invalid.len(),
-                }),
-            );
-        } else {
-            eprintln!(
-                "No files matching pattern '{}' found in {}",
-                args.pattern,
-                args.dir.display()
-            );
-            if !scan_result.unmatched.is_empty() {
-                eprintln!(
-                    "  {} files didn't match pattern",
-                    scan_result.unmatched.len()
-                );
-            }
-            if !scan_result.invalid.is_empty() {
-                eprintln!(
-                    "  {} files had invalid key indices",
-                    scan_result.invalid.len()
-                );
-            }
+        output.warning(&format!(
+            "No files matching pattern '{}' found in {}",
+            args.pattern,
+            args.dir.display()
+        ));
+        if !scan_result.unmatched.is_empty() {
+            output.info(&format!(
+                "{} files didn't match pattern",
+                scan_result.unmatched.len()
+            ));
+        }
+        if !scan_result.invalid.is_empty() {
+            output.info(&format!(
+                "{} files had invalid key indices",
+                scan_result.invalid.len()
+            ));
         }
         return Ok(());
     }
@@ -605,43 +593,20 @@ fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
                 success_count += 1;
                 // Track state change
                 state::record::set_key(mapping.key, mapping.path.clone());
-                results.push(BatchKeyResult {
-                    key: mapping.key,
-                    path: mapping.path.display().to_string(),
-                    ok: true,
-                    error: None,
-                });
-                if !cli.quiet && !cli.use_json() {
-                    println!("Key {}: {}", mapping.key, mapping.path.display());
-                }
+                results.push(BatchKeyResult::set_key_success(mapping.key, &mapping.path));
             }
             Err(e) => {
                 error_count += 1;
-                results.push(BatchKeyResult {
-                    key: mapping.key,
-                    path: mapping.path.display().to_string(),
-                    ok: false,
-                    error: Some(e.to_string()),
-                });
+                results.push(BatchKeyResult::set_key_failure(
+                    mapping.key,
+                    &mapping.path,
+                    &e.to_string(),
+                ));
 
-                if args.continue_on_error {
-                    if !cli.quiet && !cli.use_json() {
-                        eprintln!("Key {} failed: {}", mapping.key, e);
-                    }
-                } else {
-                    // Return immediately on first error if not continuing
-                    if cli.use_json() {
-                        output_json(
-                            cli,
-                            &BatchSetKeysResult {
-                                ok: false,
-                                results,
-                                success_count,
-                                error_count,
-                                skipped_count: 0,
-                            },
-                        );
-                    }
+                if !args.continue_on_error {
+                    // Output results so far before returning error
+                    let summary = BatchSummary::new(results.len(), success_count, error_count);
+                    output.batch_set_keys(&results, &summary);
                     return Err(e);
                 }
             }
@@ -649,43 +614,15 @@ fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs) -> Result<()> {
     }
 
     // Output final results
-    if cli.use_json() {
-        output_json(
-            cli,
-            &BatchSetKeysResult {
-                ok: error_count == 0,
-                results,
-                success_count,
-                error_count,
-                skipped_count: scan_result.mappings.len() - success_count - error_count,
-            },
-        );
-    } else if !cli.quiet {
-        println!("Set {success_count} keys ({error_count} errors)");
+    let skipped = scan_result.mappings.len() - success_count - error_count;
+    let summary = BatchSummary::new(results.len(), success_count, error_count).with_skipped(skipped);
+    if !cli.quiet {
+        output.batch_set_keys(&results, &summary);
     }
 
     Ok(())
 }
 
-/// Result for a single key in batch operation.
-#[derive(Serialize)]
-struct BatchKeyResult {
-    key: u8,
-    path: String,
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-/// Result of batch set-keys operation.
-#[derive(Serialize)]
-struct BatchSetKeysResult {
-    ok: bool,
-    results: Vec<BatchKeyResult>,
-    success_count: usize,
-    error_count: usize,
-    skipped_count: usize,
-}
 
 /// Dry-run details for set-keys batch command.
 #[derive(Serialize)]
@@ -1188,7 +1125,7 @@ fn cmd_fill_all(cli: &Cli, args: &cli::FillAllArgs, output: &dyn Output) -> Resu
     Ok(())
 }
 
-fn cmd_fill_keys(cli: &Cli, args: &cli::FillKeysArgs) -> Result<()> {
+fn cmd_fill_keys(cli: &Cli, args: &cli::FillKeysArgs, output: &dyn Output) -> Result<()> {
     let device = open_device(cli)?;
     let device_info = device::get_device_info(&device);
     let color = parse_color(&args.color)?;
@@ -1209,7 +1146,7 @@ fn cmd_fill_keys(cli: &Cli, args: &cli::FillKeysArgs) -> Result<()> {
     }
 
     // Fill keys with color
-    let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut results: Vec<BatchKeyResult> = Vec::new();
     let mut success_count = 0;
     let mut error_count = 0;
 
@@ -1219,72 +1156,32 @@ fn cmd_fill_keys(cli: &Cli, args: &cli::FillKeysArgs) -> Result<()> {
                 success_count += 1;
                 // Track state change
                 state::record::fill_key(*key, color_str.clone());
-                results.push(serde_json::json!({
-                    "key": key,
-                    "status": "filled"
-                }));
-                if !cli.quiet && !cli.use_json() {
-                    println!("Key {key}: filled with {color_str}");
-                }
+                results.push(BatchKeyResult::fill_success(*key, &color_str));
             }
             Err(e) => {
                 error_count += 1;
-                results.push(serde_json::json!({
-                    "key": key,
-                    "status": "failed",
-                    "error": e.to_string()
-                }));
+                results.push(BatchKeyResult::fill_failure(*key, &color_str, &e.to_string()));
 
-                if args.continue_on_error {
-                    if !cli.quiet && !cli.use_json() {
-                        eprintln!("Key {key} failed: {e}");
-                    }
-                } else {
-                    if cli.use_json() {
-                        output_json(
-                            cli,
-                            &serde_json::json!({
-                                "command": "fill-keys",
-                                "color": color_str,
-                                "ok": false,
-                                "results": results,
-                                "summary": {
-                                    "total": keys.len(),
-                                    "filled": success_count,
-                                    "failed": error_count,
-                                }
-                            }),
-                        );
-                    }
+                if !args.continue_on_error {
+                    // Output results so far before returning error
+                    let summary = BatchSummary::new(results.len(), success_count, error_count);
+                    output.batch_fill_keys(&color_str, &results, &summary);
                     return Err(e);
                 }
             }
         }
     }
 
-    if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({
-                "command": "fill-keys",
-                "color": color_str,
-                "ok": error_count == 0,
-                "results": results,
-                "summary": {
-                    "total": keys.len(),
-                    "filled": success_count,
-                    "failed": error_count,
-                }
-            }),
-        );
-    } else if !cli.quiet {
-        println!("Filled {success_count} keys with {color_str} ({error_count} errors)");
+    // Output final results
+    let summary = BatchSummary::new(keys.len(), success_count, error_count);
+    if !cli.quiet {
+        output.batch_fill_keys(&color_str, &results, &summary);
     }
 
     Ok(())
 }
 
-fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
+fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs, output: &dyn Output) -> Result<()> {
     // Handle dry-run mode
     if cli.is_dry_run() {
         return cmd_clear_keys_dry_run(cli, args);
@@ -1312,28 +1209,18 @@ fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
         device::clear_all_keys(&device)?;
         // Track state change
         state::record::clear_all(device_info.key_count);
-        if cli.use_json() {
-            output_json(
-                cli,
-                &serde_json::json!({
-                    "command": "clear-keys",
-                    "ok": true,
-                    "cleared": "all",
-                    "summary": {
-                        "total": device_info.key_count,
-                        "cleared": device_info.key_count,
-                        "failed": 0,
-                    }
-                }),
-            );
-        } else if !cli.quiet {
-            println!("Cleared all {} keys", device_info.key_count);
+        let results: Vec<BatchKeyResult> = (0..device_info.key_count)
+            .map(|k| BatchKeyResult::clear_success(k))
+            .collect();
+        let summary = BatchSummary::new(device_info.key_count as usize, device_info.key_count as usize, 0);
+        if !cli.quiet {
+            output.batch_clear_keys(&results, &summary);
         }
         return Ok(());
     }
 
     // Clear individual keys
-    let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut results: Vec<BatchKeyResult> = Vec::new();
     let mut success_count = 0;
     let mut error_count = 0;
 
@@ -1343,41 +1230,19 @@ fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
                 success_count += 1;
                 // Track state change
                 state::record::clear_key(*key);
-                results.push(serde_json::json!({
-                    "key": key,
-                    "status": "cleared"
-                }));
-                if !cli.quiet && !cli.use_json() {
-                    println!("Key {key}: cleared");
-                }
+                results.push(BatchKeyResult::clear_success(*key));
             }
             Err(e) => {
                 error_count += 1;
-                results.push(serde_json::json!({
-                    "key": key,
-                    "status": "failed",
-                    "error": e.to_string()
-                }));
+                results.push(BatchKeyResult::clear_failure(*key, &e.to_string()));
 
                 if args.continue_on_error {
-                    if !cli.quiet && !cli.use_json() {
-                        eprintln!("Key {key} failed: {e}");
-                    }
+                    // Continue processing other keys
                 } else {
-                    if cli.use_json() {
-                        output_json(
-                            cli,
-                            &serde_json::json!({
-                                "command": "clear-keys",
-                                "ok": false,
-                                "results": results,
-                                "summary": {
-                                    "total": keys.len(),
-                                    "cleared": success_count,
-                                    "failed": error_count,
-                                }
-                            }),
-                        );
+                    // Output results so far before returning error
+                    let summary = BatchSummary::new(keys.len(), success_count, error_count);
+                    if !cli.quiet {
+                        output.batch_clear_keys(&results, &summary);
                     }
                     return Err(e);
                 }
@@ -1385,22 +1250,9 @@ fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs) -> Result<()> {
         }
     }
 
-    if cli.use_json() {
-        output_json(
-            cli,
-            &serde_json::json!({
-                "command": "clear-keys",
-                "ok": error_count == 0,
-                "results": results,
-                "summary": {
-                    "total": keys.len(),
-                    "cleared": success_count,
-                    "failed": error_count,
-                }
-            }),
-        );
-    } else if !cli.quiet {
-        println!("Cleared {success_count} keys ({error_count} errors)");
+    let summary = BatchSummary::new(keys.len(), success_count, error_count);
+    if !cli.quiet {
+        output.batch_clear_keys(&results, &summary);
     }
 
     Ok(())

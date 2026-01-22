@@ -9,7 +9,7 @@ use tracing::{debug, instrument, trace};
 use crate::device::{ButtonEvent, DeviceInfo};
 use crate::error::SdError;
 
-use super::{Output, RobotFormat};
+use super::{BatchKeyResult, BatchSummary, Output, RobotFormat};
 
 /// JSON output implementation for AI agents and scripting.
 ///
@@ -188,6 +188,53 @@ impl Output for RobotOutput {
     #[instrument(skip(self))]
     fn newline(&self) {
         trace!("Robot: newline (no-op)");
+    }
+
+    #[instrument(skip(self, results, summary), fields(total = summary.total, success = summary.success))]
+    fn batch_set_keys(&self, results: &[BatchKeyResult], summary: &BatchSummary) {
+        debug!("Robot: batch_set_keys");
+        self.output_json(&serde_json::json!({
+            "command": "set-keys",
+            "ok": summary.is_success(),
+            "results": results,
+            "summary": {
+                "total": summary.total,
+                "success": summary.success,
+                "failed": summary.failed,
+                "skipped": summary.skipped,
+            }
+        }));
+    }
+
+    #[instrument(skip(self, results, summary), fields(total = summary.total, success = summary.success))]
+    fn batch_fill_keys(&self, color: &str, results: &[BatchKeyResult], summary: &BatchSummary) {
+        debug!(color, "Robot: batch_fill_keys");
+        self.output_json(&serde_json::json!({
+            "command": "fill-keys",
+            "color": color,
+            "ok": summary.is_success(),
+            "results": results,
+            "summary": {
+                "total": summary.total,
+                "filled": summary.success,
+                "failed": summary.failed,
+            }
+        }));
+    }
+
+    #[instrument(skip(self, results, summary), fields(total = summary.total, success = summary.success))]
+    fn batch_clear_keys(&self, results: &[BatchKeyResult], summary: &BatchSummary) {
+        debug!("Robot: batch_clear_keys");
+        self.output_json(&serde_json::json!({
+            "command": "clear-keys",
+            "ok": summary.is_success(),
+            "results": results,
+            "summary": {
+                "total": summary.total,
+                "cleared": summary.success,
+                "failed": summary.failed,
+            }
+        }));
     }
 }
 
