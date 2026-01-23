@@ -10,6 +10,10 @@ repository = "https://github.com/user/rust_stream_deck"
 keywords = ["streamdeck", "elgato", "hid", "cli", "automation"]
 categories = ["command-line-utilities", "hardware-support"]
 
+[lib]
+name = "sd"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sd"
 path = "src/main.rs"

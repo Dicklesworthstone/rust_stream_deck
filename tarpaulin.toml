@@ -1,0 +1,57 @@
+# Tarpaulin configuration for code coverage
+# See: https://github.com/xd009642/tarpaulin
+
+[default]
+# Test types to run
+run-types = ["Tests"]
+
+# Keep previous build artifacts for faster runs
+skip-clean = true
+
+# Show test output
+verbose = true
+
+# Don't enable all features (use defaults)
+all-features = false
+
+# Single package (not workspace)
+workspace = false
+
+# Maximum time per test
+timeout = "120s"
+
+# Output formats
+out = ["Html", "Lcov"]
+
+# Output directory for reports
+output-dir = "coverage"
+
+# Fail if coverage drops below threshold
+# Start at 50% and increase as tests improve
+fail-under = 50
+
+# Exclude test utilities and build scripts from coverage
+exclude-files = [
+    "tests/*",
+    "build.rs",
+]
+
+# Exclude specific functions/modules that are hard to test
+# (e.g., device communication that requires hardware)
+[exclude]
+# Add patterns here as needed, e.g.:
+# functions = ["device::real::*"]
+
+[profile.ci]
+# CI-specific settings: stricter threshold
+fail-under = 60
+out = ["Lcov", "Json"]
+output-dir = "coverage"
+skip-clean = false
+
+[profile.quick]
+# Quick local coverage check
+out = ["Html"]
+output-dir = "coverage"
+skip-clean = true
+verbose = false

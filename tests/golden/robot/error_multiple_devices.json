@@ -1,0 +1,6 @@
+{
+  "error": true,
+  "message": "multiple devices found: AL12XL0001, AL12MN0002",
+  "suggestion": "Use `sd --serial <SERIAL>` to target a specific device.",
+  "recoverable": true
+}

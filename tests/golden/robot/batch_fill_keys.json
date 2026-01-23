@@ -1,0 +1,22 @@
+{
+  "command": "fill-keys",
+  "color": "#FF5500",
+  "ok": true,
+  "results": [
+    {
+      "key": 0,
+      "color": "#FF5500",
+      "ok": true
+    },
+    {
+      "key": 1,
+      "color": "#FF5500",
+      "ok": true
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "filled": 2,
+    "failed": 0
+  }
+}

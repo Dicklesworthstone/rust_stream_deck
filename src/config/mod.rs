@@ -5,6 +5,7 @@
 //! and our internal `SQLite` storage format.
 
 mod db;
+pub mod declarative;
 mod key_config;
 mod loader;
 mod path;

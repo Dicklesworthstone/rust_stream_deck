@@ -1,0 +1,11 @@
+{
+  "serial": "AL12XL0001",
+  "product_name": "Stream Deck XL",
+  "firmware_version": "1.5.3",
+  "key_count": 32,
+  "key_width": 96,
+  "key_height": 96,
+  "rows": 4,
+  "cols": 8,
+  "kind": "Xl"
+}

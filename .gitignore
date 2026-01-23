@@ -1,4 +1,11 @@
 # bv (beads viewer) local config and caches
 .bv/
+
+# Build artifacts
 target/
 target-crimson/
+
+# Coverage reports
+coverage/
+*.profraw
+*.profdata

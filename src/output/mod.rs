@@ -121,6 +121,146 @@ pub struct BatchSummary {
     pub skipped: Option<usize>,
 }
 
+// === Validation Result Types ===
+
+/// Severity level for validation issues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueSeverity {
+    /// Error - validation fails
+    Error,
+    /// Warning - validation passes but issue noted
+    Warning,
+}
+
+/// A single validation issue (error or warning).
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidationIssue {
+    /// Field or location where the issue occurred
+    pub field: String,
+    /// Human-readable message describing the issue
+    pub message: String,
+    /// Severity level
+    pub severity: IssueSeverity,
+    /// Optional suggestion for fixing the issue
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+}
+
+impl ValidationIssue {
+    /// Create a new error issue.
+    #[must_use]
+    pub fn error(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            field: field.into(),
+            message: message.into(),
+            severity: IssueSeverity::Error,
+            suggestion: None,
+        }
+    }
+
+    /// Create a new warning issue.
+    #[must_use]
+    pub fn warning(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            field: field.into(),
+            message: message.into(),
+            severity: IssueSeverity::Warning,
+            suggestion: None,
+        }
+    }
+
+    /// Add a suggestion to this issue.
+    #[must_use]
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestion = Some(suggestion.into());
+        self
+    }
+}
+
+/// Result of validating a configuration file.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidationResult {
+    /// Whether the configuration is valid (no errors)
+    pub valid: bool,
+    /// Path to the config file
+    pub config_path: String,
+    /// Name of the profile (if specified in config)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_name: Option<String>,
+    /// All issues found during validation
+    pub issues: Vec<ValidationIssue>,
+    /// Summary statistics
+    pub summary: ValidationSummary,
+}
+
+/// Summary of validation results.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidationSummary {
+    pub error_count: usize,
+    pub warning_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brightness: Option<u8>,
+}
+
+impl ValidationResult {
+    /// Create a new validation result for a config file.
+    #[must_use]
+    pub fn new(config_path: &Path) -> Self {
+        Self {
+            valid: true,
+            config_path: config_path.display().to_string(),
+            config_name: None,
+            issues: Vec::new(),
+            summary: ValidationSummary {
+                error_count: 0,
+                warning_count: 0,
+                key_count: None,
+                brightness: None,
+            },
+        }
+    }
+
+    /// Add an error issue.
+    pub fn add_error(&mut self, field: impl Into<String>, message: impl Into<String>) {
+        self.issues.push(ValidationIssue::error(field, message));
+        self.summary.error_count += 1;
+        self.valid = false;
+    }
+
+    /// Add a warning issue.
+    pub fn add_warning(&mut self, field: impl Into<String>, message: impl Into<String>) {
+        self.issues.push(ValidationIssue::warning(field, message));
+        self.summary.warning_count += 1;
+    }
+
+    /// Check if validation passed (no errors).
+    #[must_use]
+    pub const fn is_valid(&self) -> bool {
+        self.valid
+    }
+
+    /// Get all errors.
+    #[must_use]
+    pub fn errors(&self) -> Vec<&ValidationIssue> {
+        self.issues
+            .iter()
+            .filter(|i| i.severity == IssueSeverity::Error)
+            .collect()
+    }
+
+    /// Get all warnings.
+    #[must_use]
+    pub fn warnings(&self) -> Vec<&ValidationIssue> {
+        self.issues
+            .iter()
+            .filter(|i| i.severity == IssueSeverity::Warning)
+            .collect()
+    }
+}
+
 impl BatchSummary {
     #[must_use]
     pub fn new(total: usize, success: usize, failed: usize) -> Self {
@@ -240,4 +380,8 @@ pub trait Output {
 
     /// Output results of a batch clear-keys operation.
     fn batch_clear_keys(&self, results: &[BatchKeyResult], summary: &BatchSummary);
+
+    // Validation output
+    /// Output results of config validation.
+    fn validation_result(&self, result: &ValidationResult);
 }

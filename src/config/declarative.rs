@@ -282,7 +282,10 @@ pub fn save_config<P: AsRef<Path>>(config: &ProfileConfig, path: P) -> Result<()
     // Write to file
     std::fs::write(path, content)?;
 
-    info!(bytes = path.metadata().map(|m| m.len()).unwrap_or(0), "Configuration saved");
+    info!(
+        bytes = path.metadata().map(|m| m.len()).unwrap_or(0),
+        "Configuration saved"
+    );
     Ok(())
 }
 
@@ -345,7 +348,7 @@ name: Test Profile
 
     #[test]
     fn test_load_yaml_full() {
-        let yaml = r#"
+        let yaml = r##"
 name: Full Profile
 device: ABC123
 brightness: 75
@@ -358,7 +361,7 @@ keys:
     color: "#222222"
   "default":
     clear: true
-"#;
+"##;
         let config = load_config_from_str(yaml, ConfigFormat::Yaml).unwrap();
 
         assert_eq!(config.name, Some("Full Profile".to_string()));
@@ -378,7 +381,7 @@ name = "Test Profile"
 
     #[test]
     fn test_load_toml_full() {
-        let toml_str = r#"
+        let toml_str = r##"
 name = "Full Profile"
 device = "ABC123"
 brightness = 75
@@ -394,7 +397,7 @@ color = "#222222"
 
 [keys."default"]
 clear = true
-"#;
+"##;
         let config = load_config_from_str(toml_str, ConfigFormat::Toml).unwrap();
 
         assert_eq!(config.name, Some("Full Profile".to_string()));
@@ -486,7 +489,10 @@ keys:
 
         // Should be ordered: Single, Range, Row, Default
         assert!(matches!(parsed[0].0, KeySelector::Single(0)));
-        assert!(matches!(parsed[1].0, KeySelector::Range { start: 1, end: 5 }));
+        assert!(matches!(
+            parsed[1].0,
+            KeySelector::Range { start: 1, end: 5 }
+        ));
         assert!(matches!(parsed[2].0, KeySelector::Row(0)));
         assert!(matches!(parsed[3].0, KeySelector::Default));
     }
@@ -533,11 +539,11 @@ keys:
 
     #[test]
     fn test_key_config_color_hex_yaml() {
-        let yaml = r#"
+        let yaml = r##"
 keys:
   "0":
     color: "#FF5500"
-"#;
+"##;
         let config = load_config_from_str(yaml, ConfigFormat::Yaml).unwrap();
         let key_config = config.keys.get("0").unwrap();
 

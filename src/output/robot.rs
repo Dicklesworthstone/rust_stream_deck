@@ -9,7 +9,7 @@ use tracing::{debug, instrument, trace};
 use crate::device::{ButtonEvent, DeviceInfo};
 use crate::error::SdError;
 
-use super::{BatchKeyResult, BatchSummary, Output, RobotFormat};
+use super::{BatchKeyResult, BatchSummary, Output, RobotFormat, ValidationResult};
 
 /// JSON output implementation for AI agents and scripting.
 ///
@@ -235,6 +235,12 @@ impl Output for RobotOutput {
                 "failed": summary.failed,
             }
         }));
+    }
+
+    #[instrument(skip(self, result), fields(valid = result.valid, errors = result.summary.error_count))]
+    fn validation_result(&self, result: &ValidationResult) {
+        debug!("Robot: validation_result");
+        self.output_json(result);
     }
 }
 

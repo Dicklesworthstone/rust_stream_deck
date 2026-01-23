@@ -1,0 +1,19 @@
+{
+  "command": "clear-keys",
+  "ok": true,
+  "results": [
+    {
+      "key": 0,
+      "ok": true
+    },
+    {
+      "key": 1,
+      "ok": true
+    }
+  ],
+  "summary": {
+    "total": 2,
+    "cleared": 2,
+    "failed": 0
+  }
+}

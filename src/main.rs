@@ -96,6 +96,8 @@ fn run(cli: &Cli, output: &dyn Output) -> Result<()> {
         Some(Commands::Read(args)) => cmd_read(cli, args, output),
         Some(Commands::Init(args)) => cmd_init(cli, args),
         Some(Commands::Config(args)) => cmd_config(cli, args),
+        Some(Commands::Validate(args)) => cmd_validate(cli, args, output),
+        Some(Commands::Apply(args)) => cmd_apply(cli, args, output),
         Some(Commands::Save(args)) => cmd_save(cli, args),
         Some(Commands::Restore(args)) => cmd_restore(cli, args),
         Some(Commands::Snapshots(args)) => cmd_snapshots(cli, args),
@@ -1705,6 +1707,605 @@ fn cmd_init(cli: &Cli, args: &cli::InitArgs) -> Result<()> {
 fn cmd_config(cli: &Cli, args: &cli::ConfigArgs) -> Result<()> {
     let _ = (cli, args); // TODO: implement
     eprintln!("Config show not yet implemented");
+    Ok(())
+}
+
+/// Validate a declarative configuration file without applying it.
+fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Result<()> {
+    use config::declarative::{load_config, ConfigFormat};
+    use output::ValidationResult;
+    use tracing::{debug, info, warn};
+
+    info!(config = %args.config.display(), "Validating configuration file");
+
+    let mut result = ValidationResult::new(&args.config);
+
+    // Phase 1: Check file exists
+    if !args.config.exists() {
+        result.add_error("config_file", format!("File not found: {}", args.config.display()));
+        output.validation_result(&result);
+        return if args.strict || !result.is_valid() {
+            Err(SdError::ConfigNotFound { path: args.config.display().to_string() })
+        } else {
+            Ok(())
+        };
+    }
+
+    // Phase 2: Detect format
+    let format = ConfigFormat::from_extension(&args.config);
+    if format.is_none() {
+        result.add_error(
+            "config_file",
+            "Unknown file extension. Expected .yaml, .yml, or .toml",
+        );
+        output.validation_result(&result);
+        return Err(SdError::ConfigParse(
+            "Unknown config format".to_string(),
+        ));
+    }
+
+    // Phase 3: Load and parse
+    let config = match load_config(&args.config) {
+        Ok(c) => c,
+        Err(e) => {
+            result.add_error("syntax", e.to_string());
+            output.validation_result(&result);
+            return Err(e);
+        }
+    };
+
+    debug!(name = ?config.name, keys = config.keys.len(), "Config parsed successfully");
+
+    // Set config name
+    result.config_name = config.name.clone();
+
+    // Set summary stats
+    result.summary.key_count = Some(config.keys.len());
+    result.summary.brightness = config.brightness;
+
+    // Phase 4: Validate brightness
+    if let Some(brightness) = config.brightness {
+        if brightness > 100 {
+            result.add_error(
+                "brightness",
+                format!("Brightness {} exceeds maximum of 100", brightness),
+            );
+        }
+    }
+
+    // Phase 5: Validate key configurations
+    for (selector_str, key_config) in &config.keys {
+        // Validate selector
+        match config::KeySelector::parse(selector_str) {
+            Ok(_) => {}
+            Err(e) => {
+                result.add_error(
+                    format!("key[{}]", selector_str),
+                    format!("Invalid selector: {}", e),
+                );
+            }
+        }
+
+        // Validate key config
+        if let Err(e) = key_config.validate() {
+            result.add_error(
+                format!("key[{}]", selector_str),
+                e.to_string(),
+            );
+        }
+
+        // Validate image paths exist (if image type)
+        match key_config {
+            config::KeyConfig::Image { image, .. } => {
+                let resolved = if image.starts_with("~") {
+                    if let Some(home) = config::home_dir() {
+                        home.join(image.strip_prefix("~").unwrap_or(image))
+                    } else {
+                        image.clone()
+                    }
+                } else if image.is_relative() {
+                    args.config.parent().map(|p| p.join(image)).unwrap_or_else(|| image.clone())
+                } else {
+                    image.clone()
+                };
+
+                if !resolved.exists() {
+                    result.add_error(
+                        format!("key[{}]", selector_str),
+                        format!("Image not found: {}", image.display()),
+                    );
+                }
+            }
+            config::KeyConfig::Pattern { pattern, .. } => {
+                if !pattern.contains("{index}") {
+                    result.add_error(
+                        format!("key[{}]", selector_str),
+                        "Pattern must contain {index} placeholder",
+                    );
+                }
+            }
+            config::KeyConfig::Color { color } => {
+                if color.to_rgb().is_err() {
+                    result.add_error(
+                        format!("key[{}]", selector_str),
+                        format!("Invalid color: {:?}", color),
+                    );
+                }
+            }
+            config::KeyConfig::Clear { clear } => {
+                if !clear {
+                    result.add_warning(
+                        format!("key[{}]", selector_str),
+                        "clear: false is redundant; omit the key instead",
+                    );
+                }
+            }
+        }
+    }
+
+    // Phase 6: Device-specific validation (optional, if device connected)
+    // Try to get device info, but don't fail if no device
+    match list_devices() {
+        Ok(devices) if !devices.is_empty() => {
+            let device_info = &devices[0];
+            let key_count = device_info.key_count;
+
+            for (selector_str, _) in &config.keys {
+                if let Ok(selector) = config::KeySelector::parse(selector_str) {
+                    // Check if selector indices are valid for this device
+                    match &selector {
+                        config::KeySelector::Single(idx) => {
+                            if *idx >= key_count {
+                                result.add_error(
+                                    format!("key[{}]", selector_str),
+                                    format!(
+                                        "Key index {} out of range for {} (0-{})",
+                                        idx,
+                                        device_info.product_name,
+                                        key_count - 1
+                                    ),
+                                );
+                            }
+                        }
+                        config::KeySelector::Range { start, end } => {
+                            if *end >= key_count {
+                                result.add_error(
+                                    format!("key[{}]", selector_str),
+                                    format!(
+                                        "Range end {} out of range for {} (0-{})",
+                                        end,
+                                        device_info.product_name,
+                                        key_count - 1
+                                    ),
+                                );
+                            }
+                            if start > end {
+                                result.add_error(
+                                    format!("key[{}]", selector_str),
+                                    format!("Invalid range: start {} > end {}", start, end),
+                                );
+                            }
+                        }
+                        config::KeySelector::Row(row) => {
+                            if *row >= device_info.rows {
+                                result.add_error(
+                                    format!("key[{}]", selector_str),
+                                    format!(
+                                        "Row {} out of range for {} (0-{})",
+                                        row,
+                                        device_info.product_name,
+                                        device_info.rows - 1
+                                    ),
+                                );
+                            }
+                        }
+                        config::KeySelector::Column(col) => {
+                            if *col >= device_info.cols {
+                                result.add_error(
+                                    format!("key[{}]", selector_str),
+                                    format!(
+                                        "Column {} out of range for {} (0-{})",
+                                        col,
+                                        device_info.product_name,
+                                        device_info.cols - 1
+                                    ),
+                                );
+                            }
+                        }
+                        config::KeySelector::Default => {}
+                    }
+                }
+            }
+        }
+        _ => {
+            result.add_warning(
+                "device",
+                "No device connected; skipping device-specific validation",
+            );
+        }
+    }
+
+    info!(
+        valid = result.is_valid(),
+        errors = result.summary.error_count,
+        warnings = result.summary.warning_count,
+        "Validation complete"
+    );
+
+    output.validation_result(&result);
+
+    // Exit with error if not valid or if strict mode and warnings exist
+    if !result.is_valid() {
+        Err(SdError::ConfigInvalid(format!(
+            "{} error(s) found",
+            result.summary.error_count
+        )))
+    } else if args.strict && result.summary.warning_count > 0 {
+        Err(SdError::ConfigInvalid(format!(
+            "{} warning(s) found (strict mode)",
+            result.summary.warning_count
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// Apply a declarative configuration to the device.
+fn cmd_apply(cli: &Cli, args: &cli::ApplyArgs, output: &dyn Output) -> Result<()> {
+    use config::declarative::load_config;
+    use config::KeySelector;
+    use tracing::{debug, info, warn};
+
+    info!(config = %args.config.display(), "Applying configuration");
+
+    // Phase 1: Load and validate config
+    if !args.config.exists() {
+        return Err(SdError::ConfigNotFound {
+            path: args.config.display().to_string(),
+        });
+    }
+
+    let config = load_config(&args.config)?;
+    debug!(
+        name = ?config.name,
+        keys = config.keys.len(),
+        brightness = ?config.brightness,
+        "Config loaded"
+    );
+
+    // Phase 2: Validate config (unless --force)
+    if !args.force {
+        // Run validation to check for errors
+        let mut has_errors = false;
+
+        // Check brightness
+        if let Some(brightness) = config.brightness {
+            if brightness > 100 {
+                output.error(&SdError::InvalidBrightness { value: brightness });
+                has_errors = true;
+            }
+        }
+
+        // Check key configs
+        for (selector_str, key_config) in &config.keys {
+            if let Err(e) = KeySelector::parse(selector_str) {
+                output.error(&SdError::ConfigParse(format!(
+                    "Invalid selector '{}': {}",
+                    selector_str, e
+                )));
+                has_errors = true;
+            }
+            if let Err(e) = key_config.validate() {
+                output.error(&SdError::ConfigParse(format!(
+                    "Invalid key config for '{}': {}",
+                    selector_str, e
+                )));
+                has_errors = true;
+            }
+        }
+
+        if has_errors {
+            return Err(SdError::ConfigInvalid(
+                "Config has errors. Use --force to apply anyway.".to_string(),
+            ));
+        }
+    }
+
+    // Phase 3: Handle dry-run mode
+    if args.dry_run || args.diff {
+        return cmd_apply_dry_run(cli, args, &config, output);
+    }
+
+    // Phase 4: Open device
+    let device = open_device(cli)?;
+    let device_info = device::get_device_info(&device);
+
+    // Phase 5: Apply brightness (unless --no-brightness)
+    if !args.no_brightness {
+        if let Some(brightness) = config.brightness {
+            debug!(brightness, "Setting brightness");
+            device::set_brightness(&device, brightness)?;
+            state::record::brightness(brightness);
+            output.brightness_set(brightness);
+        }
+    }
+
+    // Phase 6: Apply key configurations
+    let mut results: Vec<BatchKeyResult> = Vec::new();
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    // Process keys in selector priority order
+    for (selector_str, key_config) in &config.keys {
+        let selector = match KeySelector::parse(selector_str) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(selector = selector_str, error = %e, "Skipping invalid selector");
+                continue;
+            }
+        };
+
+        let keys = match selector.resolve(&device_info) {
+            Ok(k) => k,
+            Err(e) => {
+                warn!(selector = selector_str, error = %e, "Failed to resolve selector");
+                continue;
+            }
+        };
+
+        for key in keys {
+            let result = apply_key_config(&device, &device_info, key, key_config, &args.config);
+            match result {
+                Ok(res) => {
+                    success_count += 1;
+                    results.push(res);
+                }
+                Err(e) => {
+                    error_count += 1;
+                    results.push(BatchKeyResult {
+                        key,
+                        path: None,
+                        color: None,
+                        ok: false,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        }
+    }
+
+    // Phase 7: Output results
+    let summary = BatchSummary::new(results.len(), success_count, error_count);
+
+    if cli.use_json() {
+        output_json(cli, &serde_json::json!({
+            "command": "apply",
+            "config": args.config.display().to_string(),
+            "config_name": config.name,
+            "device": {
+                "serial": device_info.serial,
+                "product": device_info.product_name,
+            },
+            "results": results,
+            "summary": summary,
+        }));
+    } else {
+        if let Some(name) = &config.name {
+            output.info(&format!("Applied config: {}", name));
+        }
+        output.batch_set_keys(&results, &summary);
+    }
+
+    if error_count > 0 {
+        Err(SdError::Other(format!(
+            "{} key(s) failed to apply",
+            error_count
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// Apply a single key configuration to the device.
+fn apply_key_config(
+    device: &impl DeviceOperations,
+    device_info: &device::DeviceInfo,
+    key: u8,
+    key_config: &config::KeyConfig,
+    config_path: &std::path::Path,
+) -> Result<BatchKeyResult> {
+    match key_config {
+        config::KeyConfig::Image { image, resize } => {
+            // Resolve image path relative to config file
+            let resolved = if image.starts_with("~") {
+                if let Some(home) = config::home_dir() {
+                    home.join(image.strip_prefix("~").unwrap_or(image))
+                } else {
+                    image.clone()
+                }
+            } else if image.is_relative() {
+                config_path
+                    .parent()
+                    .map(|p| p.join(image))
+                    .unwrap_or_else(|| image.clone())
+            } else {
+                image.clone()
+            };
+
+            device::set_key_image(device, key, &resolved, *resize)?;
+            state::record::set_key(key, resolved.clone());
+            Ok(BatchKeyResult::set_key_success(key, &resolved))
+        }
+        config::KeyConfig::Color { color } => {
+            let (r, g, b) = color.to_rgb()?;
+            device::fill_key_color(device, key, (r, g, b))?;
+            let color_str = format!("#{:02x}{:02x}{:02x}", r, g, b);
+            state::record::fill_key(key, color_str.clone());
+            Ok(BatchKeyResult::fill_success(key, &color_str))
+        }
+        config::KeyConfig::Clear { clear } => {
+            if *clear {
+                device::clear_key(device, key)?;
+                state::record::clear_key(key);
+                Ok(BatchKeyResult::clear_success(key))
+            } else {
+                // clear: false means skip this key
+                Ok(BatchKeyResult {
+                    key,
+                    path: None,
+                    color: None,
+                    ok: true,
+                    error: None,
+                })
+            }
+        }
+        config::KeyConfig::Pattern { pattern, resize } => {
+            // Resolve pattern by substituting {index}
+            let filename = pattern
+                .replace("{index}", &key.to_string())
+                .replace("{index:02d}", &format!("{:02}", key))
+                .replace("{index:03d}", &format!("{:03}", key));
+
+            let resolved = if filename.starts_with("~") {
+                if let Some(home) = config::home_dir() {
+                    home.join(filename.strip_prefix("~").unwrap_or(&filename))
+                } else {
+                    std::path::PathBuf::from(&filename)
+                }
+            } else if std::path::Path::new(&filename).is_relative() {
+                config_path
+                    .parent()
+                    .map(|p| p.join(&filename))
+                    .unwrap_or_else(|| std::path::PathBuf::from(&filename))
+            } else {
+                std::path::PathBuf::from(&filename)
+            };
+
+            device::set_key_image(device, key, &resolved, *resize)?;
+            state::record::set_key(key, resolved.clone());
+            Ok(BatchKeyResult::set_key_success(key, &resolved))
+        }
+    }
+}
+
+/// Dry-run handler for apply command.
+#[allow(clippy::unnecessary_wraps)]
+fn cmd_apply_dry_run(
+    cli: &Cli,
+    args: &cli::ApplyArgs,
+    config: &config::declarative::ProfileConfig,
+    output: &dyn Output,
+) -> Result<()> {
+    use config::KeySelector;
+
+    // Try to get device info
+    let device_result = open_device(cli);
+    let device_info = device_result.as_ref().ok().map(device::get_device_info);
+
+    let mut operations = Vec::new();
+    let mut warnings = Vec::new();
+
+    // Build operation list
+    for (selector_str, key_config) in &config.keys {
+        let selector = match KeySelector::parse(selector_str) {
+            Ok(s) => s,
+            Err(e) => {
+                warnings.push(format!("Invalid selector '{}': {}", selector_str, e));
+                continue;
+            }
+        };
+
+        let keys = if let Some(ref info) = device_info {
+            match selector.resolve(info) {
+                Ok(k) => k,
+                Err(e) => {
+                    warnings.push(format!("Cannot resolve '{}': {}", selector_str, e));
+                    continue;
+                }
+            }
+        } else {
+            // No device - show selector as-is
+            vec![]
+        };
+
+        let action = match key_config {
+            config::KeyConfig::Image { image, .. } => format!("set image: {}", image.display()),
+            config::KeyConfig::Color { color } => format!("fill color: {:?}", color),
+            config::KeyConfig::Clear { clear } => {
+                if *clear {
+                    "clear".to_string()
+                } else {
+                    "skip".to_string()
+                }
+            }
+            config::KeyConfig::Pattern { pattern, .. } => format!("pattern: {}", pattern),
+        };
+
+        operations.push(serde_json::json!({
+            "selector": selector_str,
+            "keys": keys,
+            "action": action,
+        }));
+    }
+
+    if cli.use_json() {
+        let response = serde_json::json!({
+            "dry_run": true,
+            "command": "apply",
+            "config": args.config.display().to_string(),
+            "config_name": config.name,
+            "brightness": config.brightness,
+            "no_brightness": args.no_brightness,
+            "device": device_info.as_ref().map(|i| serde_json::json!({
+                "serial": i.serial,
+                "product": i.product_name,
+                "key_count": i.key_count,
+            })),
+            "operations": operations,
+            "warnings": warnings,
+        });
+        output_json(cli, &response);
+    } else {
+        println!("DRY RUN: Would apply configuration");
+        println!("  Config: {}", args.config.display());
+        if let Some(name) = &config.name {
+            println!("  Profile: {}", name);
+        }
+
+        if let Some(ref info) = device_info {
+            println!(
+                "  Device: {} (serial: {})",
+                info.product_name, info.serial
+            );
+        } else {
+            println!("  Device: not connected");
+        }
+
+        if let Some(brightness) = config.brightness {
+            if args.no_brightness {
+                println!("  Brightness: {} (skipped with --no-brightness)", brightness);
+            } else {
+                println!("  Brightness: would set to {}%", brightness);
+            }
+        }
+
+        println!("\n  Key operations:");
+        for op in &operations {
+            println!(
+                "    {} -> {}",
+                op["selector"].as_str().unwrap_or("?"),
+                op["action"].as_str().unwrap_or("?")
+            );
+        }
+
+        if !warnings.is_empty() {
+            println!("\n  Warnings:");
+            for w in &warnings {
+                println!("    - {}", w);
+            }
+        }
+    }
+
     Ok(())
 }
 

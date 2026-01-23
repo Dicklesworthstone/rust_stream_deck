@@ -1,0 +1,28 @@
+{
+  "command": "set-keys",
+  "ok": true,
+  "results": [
+    {
+      "key": 0,
+      "path": "/path/to/key-0.png",
+      "ok": true
+    },
+    {
+      "key": 1,
+      "path": "/path/to/key-1.png",
+      "ok": true
+    },
+    {
+      "key": 2,
+      "path": "/path/to/key-2.png",
+      "ok": false,
+      "error": "Image processing failed"
+    }
+  ],
+  "summary": {
+    "total": 3,
+    "success": 2,
+    "failed": 1,
+    "skipped": null
+  }
+}

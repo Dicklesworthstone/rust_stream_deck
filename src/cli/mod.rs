@@ -189,6 +189,12 @@ pub enum Commands {
     /// Show current configuration
     Config(ConfigArgs),
 
+    /// Validate a declarative configuration file
+    Validate(ValidateArgs),
+
+    /// Apply a declarative configuration to the device
+    Apply(ApplyArgs),
+
     // === Snapshots ===
     /// Save current device state as a named snapshot
     Save(SaveArgs),
@@ -464,6 +470,78 @@ pub struct ConfigArgs {
     /// Show configuration file path
     #[arg(long)]
     pub path: bool,
+}
+
+/// Arguments for the validate command.
+///
+/// Validates a declarative configuration file (YAML or TOML) without applying it.
+///
+/// # Examples
+///
+/// ```bash
+/// # Validate a config file
+/// sd validate ~/.config/sd/profiles/work.yaml
+///
+/// # Strict mode (warnings become errors)
+/// sd validate config.toml --strict
+///
+/// # JSON output for scripts
+/// sd validate config.yaml --robot
+/// ```
+#[derive(Parser, Debug)]
+pub struct ValidateArgs {
+    /// Path to configuration file to validate
+    #[arg(value_name = "CONFIG")]
+    pub config: PathBuf,
+
+    /// Treat warnings as errors
+    #[arg(long)]
+    pub strict: bool,
+}
+
+/// Arguments for the apply command.
+///
+/// Applies a declarative configuration file to a Stream Deck device.
+///
+/// # Examples
+///
+/// ```bash
+/// # Apply a config file
+/// sd apply ~/.config/sd/profiles/work.yaml
+///
+/// # Preview what would change
+/// sd apply config.toml --dry-run
+///
+/// # Apply without restoring brightness
+/// sd apply config.yaml --no-brightness
+///
+/// # Force apply even with warnings
+/// sd apply config.yaml --force
+///
+/// # Show diff of changes
+/// sd apply config.yaml --diff
+/// ```
+#[derive(Parser, Debug)]
+pub struct ApplyArgs {
+    /// Path to configuration file to apply
+    #[arg(value_name = "CONFIG")]
+    pub config: PathBuf,
+
+    /// Preview changes without applying them
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
+
+    /// Apply even if validation produces warnings
+    #[arg(long)]
+    pub force: bool,
+
+    /// Skip brightness setting from config
+    #[arg(long)]
+    pub no_brightness: bool,
+
+    /// Show diff of what would change (implies --dry-run unless --apply-diff)
+    #[arg(long)]
+    pub diff: bool,
 }
 
 /// Arguments for the save command.

@@ -1,0 +1,6 @@
+{
+  "error": true,
+  "message": "no Stream Deck devices found",
+  "suggestion": "Ensure your Stream Deck is connected via USB and recognized by the system. Try `sd list` to see available devices.",
+  "recoverable": true
+}
