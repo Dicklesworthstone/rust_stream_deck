@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use sd::device::mock::{MockDevice, MockDeviceBuilder, Operation};
 use sd::device::DeviceOperations;
+use sd::device::mock::{MockDevice, MockDeviceBuilder, Operation};
 use sd::error::SdError;
 use sd::image_ops::ResizeStrategy;
 
@@ -36,7 +36,8 @@ fn test_key_image_recording() {
     let mock = MockDevice::xl();
     let test_path = Path::new("/tmp/test_icon.png");
 
-    mock.set_key_image(0, test_path, ResizeStrategy::Fit).unwrap();
+    mock.set_key_image(0, test_path, ResizeStrategy::Fit)
+        .unwrap();
     mock.assert_key_has_image(0);
 
     mock.assert_contains(&Operation::SetKeyImage {
@@ -147,7 +148,9 @@ fn test_reconnect_operations() {
 /// Test that failing keys are handled correctly.
 #[test]
 fn test_failing_keys_selective() {
-    let mock = MockDeviceBuilder::xl().with_failing_keys(vec![5, 10, 15]).build();
+    let mock = MockDeviceBuilder::xl()
+        .with_failing_keys(vec![5, 10, 15])
+        .build();
 
     // Non-failing keys should work
     mock.fill_key_color(0, (255, 0, 0)).unwrap();

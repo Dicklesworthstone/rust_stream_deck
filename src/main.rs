@@ -1712,7 +1712,7 @@ fn cmd_config(cli: &Cli, args: &cli::ConfigArgs) -> Result<()> {
 
 /// Validate a declarative configuration file without applying it.
 fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Result<()> {
-    use config::declarative::{load_config, ConfigFormat};
+    use config::declarative::{ConfigFormat, load_config};
     use output::ValidationResult;
     use tracing::{debug, info, warn};
 
@@ -1722,10 +1722,15 @@ fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Re
 
     // Phase 1: Check file exists
     if !args.config.exists() {
-        result.add_error("config_file", format!("File not found: {}", args.config.display()));
+        result.add_error(
+            "config_file",
+            format!("File not found: {}", args.config.display()),
+        );
         output.validation_result(&result);
         return if args.strict || !result.is_valid() {
-            Err(SdError::ConfigNotFound { path: args.config.display().to_string() })
+            Err(SdError::ConfigNotFound {
+                path: args.config.display().to_string(),
+            })
         } else {
             Ok(())
         };
@@ -1739,9 +1744,7 @@ fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Re
             "Unknown file extension. Expected .yaml, .yml, or .toml",
         );
         output.validation_result(&result);
-        return Err(SdError::ConfigParse(
-            "Unknown config format".to_string(),
-        ));
+        return Err(SdError::ConfigParse("Unknown config format".to_string()));
     }
 
     // Phase 3: Load and parse
@@ -1788,10 +1791,7 @@ fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Re
 
         // Validate key config
         if let Err(e) = key_config.validate() {
-            result.add_error(
-                format!("key[{}]", selector_str),
-                e.to_string(),
-            );
+            result.add_error(format!("key[{}]", selector_str), e.to_string());
         }
 
         // Validate image paths exist (if image type)
@@ -1804,7 +1804,10 @@ fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Re
                         image.clone()
                     }
                 } else if image.is_relative() {
-                    args.config.parent().map(|p| p.join(image)).unwrap_or_else(|| image.clone())
+                    args.config
+                        .parent()
+                        .map(|p| p.join(image))
+                        .unwrap_or_else(|| image.clone())
                 } else {
                     image.clone()
                 };
@@ -1952,8 +1955,8 @@ fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Re
 
 /// Apply a declarative configuration to the device.
 fn cmd_apply(cli: &Cli, args: &cli::ApplyArgs, output: &dyn Output) -> Result<()> {
-    use config::declarative::load_config;
     use config::KeySelector;
+    use config::declarative::load_config;
     use tracing::{debug, info, warn};
 
     info!(config = %args.config.display(), "Applying configuration");
@@ -2078,17 +2081,20 @@ fn cmd_apply(cli: &Cli, args: &cli::ApplyArgs, output: &dyn Output) -> Result<()
     let summary = BatchSummary::new(results.len(), success_count, error_count);
 
     if cli.use_json() {
-        output_json(cli, &serde_json::json!({
-            "command": "apply",
-            "config": args.config.display().to_string(),
-            "config_name": config.name,
-            "device": {
-                "serial": device_info.serial,
-                "product": device_info.product_name,
-            },
-            "results": results,
-            "summary": summary,
-        }));
+        output_json(
+            cli,
+            &serde_json::json!({
+                "command": "apply",
+                "config": args.config.display().to_string(),
+                "config_name": config.name,
+                "device": {
+                    "serial": device_info.serial,
+                    "product": device_info.product_name,
+                },
+                "results": results,
+                "summary": summary,
+            }),
+        );
     } else {
         if let Some(name) = &config.name {
             output.info(&format!("Applied config: {}", name));
@@ -2273,17 +2279,17 @@ fn cmd_apply_dry_run(
         }
 
         if let Some(ref info) = device_info {
-            println!(
-                "  Device: {} (serial: {})",
-                info.product_name, info.serial
-            );
+            println!("  Device: {} (serial: {})", info.product_name, info.serial);
         } else {
             println!("  Device: not connected");
         }
 
         if let Some(brightness) = config.brightness {
             if args.no_brightness {
-                println!("  Brightness: {} (skipped with --no-brightness)", brightness);
+                println!(
+                    "  Brightness: {} (skipped with --no-brightness)",
+                    brightness
+                );
             } else {
                 println!("  Brightness: would set to {}%", brightness);
             }

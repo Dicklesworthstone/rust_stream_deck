@@ -286,7 +286,9 @@ fn test_color_fixtures() {
         return;
     }
 
-    let colors = ["red", "green", "blue", "yellow", "cyan", "magenta", "white", "black"];
+    let colors = [
+        "red", "green", "blue", "yellow", "cyan", "magenta", "white", "black",
+    ];
     for color in colors {
         let path = color_dir.join(format!("{}.png", color));
         if path.exists() {

@@ -246,7 +246,10 @@ impl Output for HumanOutput {
 
             // Serial (indented, muted)
             content.append_styled("     Serial: ", self.theme.label.clone());
-            content.append_styled(&format!("{}\n", device.serial), self.theme.device_serial.clone());
+            content.append_styled(
+                &format!("{}\n", device.serial),
+                self.theme.device_serial.clone(),
+            );
 
             // Keys and firmware on same line
             content.append_styled("     Keys: ", self.theme.label.clone());
@@ -294,7 +297,10 @@ impl Output for HumanOutput {
         // Keys
         content.append_styled("  Keys        ", self.theme.label.clone());
         content.append_styled(
-            &format!("{} ({} columns × {} rows)", info.key_count, info.cols, info.rows),
+            &format!(
+                "{} ({} columns × {} rows)",
+                info.key_count, info.cols, info.rows
+            ),
             self.theme.value.clone(),
         );
         content.append("\n");
@@ -332,7 +338,10 @@ impl Output for HumanOutput {
         let mut text = Text::new("  ");
 
         // Key number with styled color
-        text.append_styled(&format!("Key {:>2}", event.key), self.theme.key_index.clone());
+        text.append_styled(
+            &format!("Key {:>2}", event.key),
+            self.theme.key_index.clone(),
+        );
         text.append(" ");
 
         // Action with appropriate color
@@ -655,7 +664,10 @@ impl Output for HumanOutput {
         // Show errors
         let errors = result.errors();
         if !errors.is_empty() {
-            content.append_styled("  ERRORS:\n", Style::new().bold().color(self.theme.error.clone()));
+            content.append_styled(
+                "  ERRORS:\n",
+                Style::new().bold().color(self.theme.error.clone()),
+            );
             for issue in errors {
                 content.append_styled("    ✗ ", Style::new().color(self.theme.error.clone()));
                 content.append_styled(&issue.field, self.theme.label.clone());
@@ -675,7 +687,10 @@ impl Output for HumanOutput {
         // Show warnings
         let warnings = result.warnings();
         if !warnings.is_empty() {
-            content.append_styled("  WARNINGS:\n", Style::new().bold().color(self.theme.warning.clone()));
+            content.append_styled(
+                "  WARNINGS:\n",
+                Style::new().bold().color(self.theme.warning.clone()),
+            );
             for issue in warnings {
                 content.append_styled("    ⚠ ", Style::new().color(self.theme.warning.clone()));
                 content.append_styled(&issue.field, self.theme.label.clone());
@@ -700,26 +715,41 @@ impl Output for HumanOutput {
             );
             if result.summary.warning_count > 0 {
                 content.append_styled(
-                    &format!(" ({} warning{})",
+                    &format!(
+                        " ({} warning{})",
                         result.summary.warning_count,
-                        if result.summary.warning_count == 1 { "" } else { "s" }
+                        if result.summary.warning_count == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
                     ),
                     Style::new().color(self.theme.warning.clone()),
                 );
             }
         } else {
             content.append_styled(
-                &format!("  ✗ Configuration has {} error{}",
+                &format!(
+                    "  ✗ Configuration has {} error{}",
                     result.summary.error_count,
-                    if result.summary.error_count == 1 { "" } else { "s" }
+                    if result.summary.error_count == 1 {
+                        ""
+                    } else {
+                        "s"
+                    }
                 ),
                 Style::new().bold().color(self.theme.error.clone()),
             );
             if result.summary.warning_count > 0 {
                 content.append_styled(
-                    &format!(" and {} warning{}",
+                    &format!(
+                        " and {} warning{}",
                         result.summary.warning_count,
-                        if result.summary.warning_count == 1 { "" } else { "s" }
+                        if result.summary.warning_count == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
                     ),
                     Style::new().color(self.theme.warning.clone()),
                 );

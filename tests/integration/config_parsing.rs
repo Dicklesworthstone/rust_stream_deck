@@ -62,7 +62,10 @@ fn test_selector_parse_single_key() {
 
     // Whitespace handling
     assert_eq!(KeySelector::parse(" 5 ").unwrap(), KeySelector::Single(5));
-    assert_eq!(KeySelector::parse("\t10\n").unwrap(), KeySelector::Single(10));
+    assert_eq!(
+        KeySelector::parse("\t10\n").unwrap(),
+        KeySelector::Single(10)
+    );
 }
 
 #[test]
@@ -245,16 +248,10 @@ fn test_selector_resolve_column_mini() {
 
     // Mini is 3 columns x 2 rows
     // Column 0: keys 0, 3
-    assert_eq!(
-        KeySelector::Column(0).resolve(&device).unwrap(),
-        vec![0, 3]
-    );
+    assert_eq!(KeySelector::Column(0).resolve(&device).unwrap(), vec![0, 3]);
 
     // Column 2: keys 2, 5
-    assert_eq!(
-        KeySelector::Column(2).resolve(&device).unwrap(),
-        vec![2, 5]
-    );
+    assert_eq!(KeySelector::Column(2).resolve(&device).unwrap(), vec![2, 5]);
 
     // Column 3 doesn't exist
     assert!(KeySelector::Column(3).resolve(&device).is_err());
@@ -315,9 +312,7 @@ fn test_selector_priority_ordering() {
 
     // Verify ordering
     assert!(KeySelector::Single(0).priority() < KeySelector::Range { start: 0, end: 5 }.priority());
-    assert!(
-        KeySelector::Range { start: 0, end: 5 }.priority() < KeySelector::Row(0).priority()
-    );
+    assert!(KeySelector::Range { start: 0, end: 5 }.priority() < KeySelector::Row(0).priority());
     assert!(KeySelector::Row(0).priority() < KeySelector::Default.priority());
 }
 
@@ -348,10 +343,7 @@ fn test_selector_might_match() {
 #[test]
 fn test_selector_display() {
     assert_eq!(KeySelector::Single(5).to_string(), "5");
-    assert_eq!(
-        KeySelector::Range { start: 8, end: 15 }.to_string(),
-        "8-15"
-    );
+    assert_eq!(KeySelector::Range { start: 8, end: 15 }.to_string(), "8-15");
     assert_eq!(KeySelector::Row(2).to_string(), "row-2");
     assert_eq!(KeySelector::Column(3).to_string(), "col-3");
     assert_eq!(KeySelector::Default.to_string(), "default");
@@ -366,10 +358,7 @@ fn test_selector_from_str() {
         KeySelector::from_str("0-7").unwrap(),
         KeySelector::Range { start: 0, end: 7 }
     );
-    assert_eq!(
-        KeySelector::from_str("row-0").unwrap(),
-        KeySelector::Row(0)
-    );
+    assert_eq!(KeySelector::from_str("row-0").unwrap(), KeySelector::Row(0));
 }
 
 #[test]
