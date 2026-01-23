@@ -13,6 +13,7 @@ use tracing::{debug, error, info, trace, warn};
 use super::DeviceOperations;
 use super::info::{ButtonEvent, ConnectionOptions, DeviceInfo};
 use crate::error::{Result, SdError};
+use crate::image_ops::ResizeStrategy;
 
 /// Real Stream Deck device wrapper.
 pub struct Device {
@@ -35,8 +36,8 @@ impl DeviceOperations for Device {
         set_brightness(self, level)
     }
 
-    fn set_key_image(&self, key: u8, path: &Path) -> Result<()> {
-        set_key_image(self, key, path)
+    fn set_key_image(&self, key: u8, path: &Path, resize: ResizeStrategy) -> Result<()> {
+        set_key_image(self, key, path, resize)
     }
 
     fn clear_key(&self, key: u8) -> Result<()> {
@@ -196,7 +197,7 @@ pub fn set_brightness(device: &Device, level: u8) -> Result<()> {
 }
 
 /// Set a key's image from a file.
-pub fn set_key_image(device: &Device, key: u8, path: &Path) -> Result<()> {
+pub fn set_key_image(device: &Device, key: u8, path: &Path, resize: ResizeStrategy) -> Result<()> {
     if key >= device.info.key_count {
         return Err(SdError::InvalidKeyIndex {
             index: key,
@@ -205,21 +206,12 @@ pub fn set_key_image(device: &Device, key: u8, path: &Path) -> Result<()> {
         });
     }
 
-    if !path.exists() {
-        return Err(SdError::ImageNotFound {
-            path: path.display().to_string(),
-        });
-    }
-
-    let img = image::open(path).map_err(|e| SdError::ImageProcessing(e.to_string()))?;
-
-    // Resize to key dimensions
-    #[allow(clippy::cast_possible_truncation)] // Key dimensions are always small
-    let resized = img.resize_exact(
+    let resized = crate::image_ops::load_and_resize(
+        path,
         device.info.key_width as u32,
         device.info.key_height as u32,
-        image::imageops::FilterType::Lanczos3,
-    );
+        resize,
+    )?;
 
     device
         .inner

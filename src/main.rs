@@ -8,6 +8,7 @@ mod cli;
 mod config;
 mod device;
 mod error;
+mod image_ops;
 mod logging;
 mod output;
 mod snapshot;
@@ -372,7 +373,7 @@ fn cmd_set_key(cli: &Cli, args: &cli::SetKeyArgs, output: &dyn Output) -> Result
     }
 
     let device = open_device(cli)?;
-    device::set_key_image(&device, args.key, &args.image)?;
+    device::set_key_image(&device, args.key, &args.image, args.resize)?;
 
     // Track state change
     state::record::set_key(args.key, args.image.clone());
@@ -604,7 +605,7 @@ fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs, output: &dyn Output) -> Resu
             continue;
         }
 
-        let result = device::set_key_image(&device, mapping.key, &mapping.path);
+        let result = device::set_key_image(&device, mapping.key, &mapping.path, args.resize);
 
         match result {
             Ok(()) => {
@@ -2166,7 +2167,7 @@ fn apply_cached_image(
     // Try cache first
     let cache_path = snapshot::image_cache_path(hash)?;
     if cache_path.exists() {
-        device::set_key_image(device, key, &cache_path)?;
+        device::set_key_image(device, key, &cache_path, image_ops::ResizeStrategy::Fit)?;
         if let Some(path) = source_path {
             state::record::set_key(key, path.clone());
         }
@@ -2176,7 +2177,7 @@ fn apply_cached_image(
     // Fall back to source path
     if let Some(path) = source_path {
         if path.exists() {
-            device::set_key_image(device, key, path)?;
+            device::set_key_image(device, key, path, image_ops::ResizeStrategy::Fit)?;
             state::record::set_key(key, path.clone());
             return Ok(());
         }

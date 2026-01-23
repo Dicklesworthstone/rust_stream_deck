@@ -17,6 +17,7 @@ pub use real::{
 use std::path::Path;
 
 use crate::error::Result;
+use crate::image_ops::ResizeStrategy;
 
 /// Core device operations trait.
 ///
@@ -59,7 +60,7 @@ pub trait DeviceOperations {
     /// Returns an error if the key index is out of range, the file
     /// doesn't exist, the image format is unsupported, or there's
     /// a communication failure.
-    fn set_key_image(&self, key: u8, path: &Path) -> Result<()>;
+    fn set_key_image(&self, key: u8, path: &Path, resize: ResizeStrategy) -> Result<()>;
 
     /// Clear a single key (set to black).
     ///

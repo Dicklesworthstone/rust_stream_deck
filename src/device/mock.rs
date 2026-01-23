@@ -32,6 +32,7 @@ use tracing::{debug, trace};
 use super::DeviceOperations;
 use super::info::{DeviceInfo, DeviceModel};
 use crate::error::{Result, SdError};
+use crate::image_ops::ResizeStrategy;
 
 /// Recorded operation for assertions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -407,7 +408,7 @@ impl DeviceOperations for MockDevice {
         Ok(())
     }
 
-    fn set_key_image(&self, key: u8, path: &Path) -> Result<()> {
+    fn set_key_image(&self, key: u8, path: &Path, _resize: ResizeStrategy) -> Result<()> {
         self.check_error()?;
         self.check_key(key)?;
 
@@ -608,7 +609,7 @@ mod tests {
     #[test]
     fn test_set_key_image() {
         let mock = MockDevice::xl();
-        mock.set_key_image(5, Path::new("/test/image.png")).unwrap();
+        mock.set_key_image(5, Path::new("/test/image.png"), ResizeStrategy::Fit).unwrap();
 
         mock.assert_key_has_image(5);
         mock.assert_contains(&Operation::SetKeyImage {

@@ -249,16 +249,7 @@ pub struct SetKeyArgs {
     pub resize: ResizeStrategy,
 }
 
-#[derive(Debug, Clone, Copy, Default, ValueEnum)]
-pub enum ResizeStrategy {
-    /// Fit within key, maintain aspect ratio (may have black bars)
-    #[default]
-    Fit,
-    /// Fill key, maintain aspect ratio (may crop)
-    Fill,
-    /// Stretch to fill (may distort)
-    Stretch,
-}
+use crate::image_ops::ResizeStrategy;
 
 /// Arguments for batch key setting from a directory.
 ///
