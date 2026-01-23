@@ -9,6 +9,7 @@ mod key_config;
 mod loader;
 mod path;
 mod schema;
+mod selector;
 
 // Re-export schema types for use by other modules
 #[allow(unused_imports)] // Types are for future use
@@ -30,3 +31,7 @@ pub use path::{PathResolver, home_dir, resolve_path, validate_image_path};
 
 // Re-export key config types for declarative YAML/TOML configuration
 pub use key_config::{ColorSpec, KeyConfig, MissingBehavior, ResolvedKey};
+
+// Re-export key selector types for targeting keys in config
+#[allow(unused_imports)] // Used by validate/apply commands (future beads)
+pub use selector::KeySelector;

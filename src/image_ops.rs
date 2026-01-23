@@ -51,21 +51,21 @@ pub fn load_and_resize(
         ResizeStrategy::Fit => {
             // resize() maintains aspect ratio and fits within bounds
             // We might need to pad it to fill the area if we want strict output size,
-            // but usually returning a smaller image is fine for display drivers 
+            // but usually returning a smaller image is fine for display drivers
             // that center it, OR we should pad with black.
-            // The elgato crate expects exact dimensions? 
+            // The elgato crate expects exact dimensions?
             // "The image will be loaded, converted, and resized to match the device's key dimensions."
             // If we return a smaller image, set_button_image might fail or behave oddly.
             // Let's create a black canvas and paste the resized image on top.
             let resized = img.resize(width, height, filter).to_rgb8();
             let mut canvas = image::RgbImage::new(width, height);
             // Default is black (0,0,0)
-            
+
             // Center the image
             let (rw, rh) = resized.dimensions();
             let x = (width - rw) / 2;
             let y = (height - rh) / 2;
-            
+
             image::imageops::overlay(&mut canvas, &resized, x.into(), y.into());
             image::DynamicImage::ImageRgb8(canvas)
         }

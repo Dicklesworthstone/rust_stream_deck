@@ -387,7 +387,8 @@ impl Output for HumanOutput {
         // Show per-key results
         for result in results {
             if result.ok {
-                self.console.print(&format!("  Key {}: cleared", result.key));
+                self.console
+                    .print(&format!("  Key {}: cleared", result.key));
             } else if let Some(ref err) = result.error {
                 let mut text = Text::new("");
                 text.append_styled(

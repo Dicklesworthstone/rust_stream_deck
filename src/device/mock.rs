@@ -609,7 +609,8 @@ mod tests {
     #[test]
     fn test_set_key_image() {
         let mock = MockDevice::xl();
-        mock.set_key_image(5, Path::new("/test/image.png"), ResizeStrategy::Fit).unwrap();
+        mock.set_key_image(5, Path::new("/test/image.png"), ResizeStrategy::Fit)
+            .unwrap();
 
         mock.assert_key_has_image(5);
         mock.assert_contains(&Operation::SetKeyImage {

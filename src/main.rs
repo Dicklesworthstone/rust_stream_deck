@@ -191,7 +191,10 @@ fn print_human_quick_start() {
     console.print("");
 
     // ROBOT MODE section
-    console.print_styled("ROBOT MODE (for AI agents)", Style::new().bold().underline());
+    console.print_styled(
+        "ROBOT MODE (for AI agents)",
+        Style::new().bold().underline(),
+    );
     console.print("");
 
     let robot_style = Style::new().color(accent.clone());
@@ -202,7 +205,10 @@ fn print_human_quick_start() {
     console.print("");
 
     // KEY LAYOUT section
-    console.print_styled("KEY LAYOUT (Stream Deck XL 32-key)", Style::new().bold().underline());
+    console.print_styled(
+        "KEY LAYOUT (Stream Deck XL 32-key)",
+        Style::new().bold().underline(),
+    );
     console.print("");
     console.print("  Row 0: [0] [1] [2] [3] [4] [5] [6] [7]");
     console.print("  Row 1: [8] [9] [10][11][12][13][14][15]");
@@ -634,14 +640,14 @@ fn cmd_set_keys(cli: &Cli, args: &cli::SetKeysArgs, output: &dyn Output) -> Resu
 
     // Output final results
     let skipped = scan_result.mappings.len() - success_count - error_count;
-    let summary = BatchSummary::new(results.len(), success_count, error_count).with_skipped(skipped);
+    let summary =
+        BatchSummary::new(results.len(), success_count, error_count).with_skipped(skipped);
     if !cli.quiet {
         output.batch_set_keys(&results, &summary);
     }
 
     Ok(())
 }
-
 
 /// Dry-run details for set-keys batch command.
 #[derive(Serialize)]
@@ -1179,7 +1185,11 @@ fn cmd_fill_keys(cli: &Cli, args: &cli::FillKeysArgs, output: &dyn Output) -> Re
             }
             Err(e) => {
                 error_count += 1;
-                results.push(BatchKeyResult::fill_failure(*key, &color_str, &e.to_string()));
+                results.push(BatchKeyResult::fill_failure(
+                    *key,
+                    &color_str,
+                    &e.to_string(),
+                ));
 
                 if !args.continue_on_error {
                     // Output results so far before returning error
@@ -1231,7 +1241,11 @@ fn cmd_clear_keys(cli: &Cli, args: &cli::ClearKeysArgs, output: &dyn Output) -> 
         let results: Vec<BatchKeyResult> = (0..device_info.key_count)
             .map(|k| BatchKeyResult::clear_success(k))
             .collect();
-        let summary = BatchSummary::new(device_info.key_count as usize, device_info.key_count as usize, 0);
+        let summary = BatchSummary::new(
+            device_info.key_count as usize,
+            device_info.key_count as usize,
+            0,
+        );
         if !cli.quiet {
             output.batch_clear_keys(&results, &summary);
         }
@@ -1929,7 +1943,10 @@ fn cmd_snapshots(cli: &Cli, args: &cli::SnapshotsArgs) -> Result<()> {
                 if let Some(ref desc) = snap.description {
                     console.print_styled(&format!("  {desc}"), Style::new().color(muted.clone()));
                 }
-                console.print(&format!("  Created: {}", snap.created_at.format("%Y-%m-%d %H:%M")));
+                console.print(&format!(
+                    "  Created: {}",
+                    snap.created_at.format("%Y-%m-%d %H:%M")
+                ));
             } else {
                 console.print(&snap.name);
             }
@@ -2005,12 +2022,18 @@ fn cmd_snapshot_show(cli: &Cli, args: &cli::SnapshotShowArgs) -> Result<()> {
 
         let mut line = Text::new("");
         line.append_styled("Created", bold.clone());
-        line.append(&format!(": {}", snap.created_at.format("%Y-%m-%d %H:%M:%S")));
+        line.append(&format!(
+            ": {}",
+            snap.created_at.format("%Y-%m-%d %H:%M:%S")
+        ));
         console.print_text(&line);
 
         let mut line = Text::new("");
         line.append_styled("Updated", bold.clone());
-        line.append(&format!(": {}", snap.updated_at.format("%Y-%m-%d %H:%M:%S")));
+        line.append(&format!(
+            ": {}",
+            snap.updated_at.format("%Y-%m-%d %H:%M:%S")
+        ));
         console.print_text(&line);
 
         if !snap.keys.is_empty() {
