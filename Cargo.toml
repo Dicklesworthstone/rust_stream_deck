@@ -46,7 +46,7 @@ anyhow = "1.0"
 # Terminal output
 indicatif = "0.17"
 console = "0.15"
-rich_rust = { path = "/dp/rich_rust", features = ["json"] }
+rich_rust = { path = "../rich_rust", features = ["json"] }
 
 # Logging
 tracing = "0.1"
@@ -82,6 +82,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# CI profile for coverage testing (inherits from dev)
+[profile.ci]
+inherits = "dev"
+debug = true
 
 [dev-dependencies]
 # Testing utilities

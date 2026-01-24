@@ -21,6 +21,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Clone rich_rust dependency
+        run: |
+          cd ..
+          git clone https://github.com/Dicklesworthstone/rich_rust.git rich_rust || true
+
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
 
@@ -53,6 +58,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Clone rich_rust dependency
+        run: |
+          cd ..
+          git clone https://github.com/Dicklesworthstone/rich_rust.git rich_rust || true
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -87,6 +97,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Clone rich_rust dependency
+        run: |
+          cd ..
+          git clone https://github.com/Dicklesworthstone/rich_rust.git rich_rust || true
+
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -102,6 +117,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Clone rich_rust dependency
+        run: |
+          cd ..
+          git clone https://github.com/Dicklesworthstone/rich_rust.git rich_rust || true
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
