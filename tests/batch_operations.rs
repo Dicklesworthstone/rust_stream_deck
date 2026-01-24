@@ -197,82 +197,82 @@ mod error_handling {
 // ============================================================================
 // Robot Mode Error Output Structure Tests
 // ============================================================================
-// Note: Robot mode errors are output to stdout as JSON, but we need to check
-// if the error is properly formatted. These tests verify the error structure.
+// Note: Dry-run mode succeeds even without a device, but indicates
+// the device is disconnected via the response JSON. These tests verify
+// the dry-run response structure when no device is connected.
 
-mod robot_mode_errors {
+mod robot_mode_dry_run_no_device {
     use super::*;
 
-    fn parse_error_json(result: &common::cli::CliResult) -> serde_json::Value {
+    fn parse_dry_run_json(result: &common::cli::CliResult) -> serde_json::Value {
         let stdout = result.stdout.trim();
-        if !stdout.is_empty() {
-            if let Ok(json) = serde_json::from_str(stdout) {
-                return json;
-            }
-        }
-        let stderr = result.stderr.trim();
-        if !stderr.is_empty() {
-            if let Ok(json) = serde_json::from_str(stderr) {
-                return json;
-            }
-        }
-        panic!(
-            "Expected JSON on stdout or stderr. stdout={}, stderr={}",
-            result.stdout, result.stderr
-        );
+        serde_json::from_str(stdout).unwrap_or_else(|e| {
+            panic!(
+                "Expected valid JSON on stdout. stdout={}, error={}",
+                result.stdout, e
+            )
+        })
     }
 
     #[test]
-    fn no_device_error_is_json() {
+    fn dry_run_returns_json_when_disconnected() {
         let cli = CliRunner::new();
         let batch_dir = fixtures_path("images/batch/complete-6");
 
-        // Without a device, this should return a JSON error
+        // Dry-run succeeds even without a device, returning JSON indicating disconnected state
         let result = cli.run_robot(&["set-keys", batch_dir.to_str().unwrap(), "--dry-run"]);
-        result.assert_failure();
-        let json = parse_error_json(&result);
-        assert_eq!(json.get("error").and_then(|v| v.as_bool()), Some(true));
+        result.assert_success();
+        let json = parse_dry_run_json(&result);
+        assert_eq!(json.get("dry_run").and_then(|v| v.as_bool()), Some(true));
+        // Device should be marked as disconnected
+        let device = json.get("device").expect("Expected device field");
+        assert_eq!(
+            device.get("connected").and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]
-    fn no_device_error_has_message() {
+    fn dry_run_has_action_field() {
         let cli = CliRunner::new();
         let result = cli.run_robot(&["clear-all", "--dry-run"]);
-        result.assert_failure();
+        result.assert_success();
 
-        let json = parse_error_json(&result);
-        let message = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let json = parse_dry_run_json(&result);
+        let action = json.get("action").and_then(|v| v.as_str()).unwrap_or("");
         assert!(
-            !message.is_empty(),
-            "Expected non-empty message in error JSON"
+            !action.is_empty(),
+            "Expected non-empty action in dry-run JSON"
         );
     }
 
     #[test]
-    fn no_device_error_has_suggestion() {
+    fn dry_run_has_validation_warnings() {
         let cli = CliRunner::new();
         let result = cli.run_robot(&["fill-all", "#FF0000", "--dry-run"]);
-        result.assert_failure();
+        result.assert_success();
 
-        let json = parse_error_json(&result);
+        let json = parse_dry_run_json(&result);
+        let validation = json.get("validation").expect("Expected validation field");
+        // Warnings should be present indicating device not connected
         assert!(
-            json.get("suggestion").is_some() && json.get("recoverable").is_some(),
-            "Expected suggestion and recoverable fields in error JSON"
+            validation.get("warnings").is_some(),
+            "Expected warnings field in validation"
         );
     }
 
     #[test]
-    fn no_device_error_mentions_stream_deck() {
+    fn dry_run_device_shows_disconnected() {
         let cli = CliRunner::new();
         let result = cli.run_robot(&["brightness", "50", "--dry-run"]);
-        result.assert_failure();
+        result.assert_success();
 
-        let json = parse_error_json(&result);
-        let message = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
-        let message_lc = message.to_lowercase();
-        assert!(
-            message_lc.contains("device") || message_lc.contains("stream deck"),
-            "Error message should mention device: {message}"
+        let json = parse_dry_run_json(&result);
+        let device = json.get("device").expect("Expected device field");
+        assert_eq!(
+            device.get("connected").and_then(|v| v.as_bool()),
+            Some(false),
+            "Device should be marked as disconnected"
         );
     }
 }
@@ -652,7 +652,8 @@ mod color_parsing {
         let result = cli.run_robot(&["fill-key", "0", "#FF0000"]);
         result.assert_failure();
         // Should fail due to device, not color parsing
-        let json = result.json();
+        // Robot mode outputs errors to stderr
+        let json = result.json_stderr();
         let msg = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
         assert!(
             msg.to_lowercase().contains("device") || msg.to_lowercase().contains("stream deck"),
@@ -666,7 +667,8 @@ mod color_parsing {
         // Test shorthand hex #F00 = red
         let result = cli.run_robot(&["fill-key", "0", "#F00"]);
         result.assert_failure();
-        let json = result.json();
+        // Robot mode outputs errors to stderr
+        let json = result.json_stderr();
         let msg = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
         // Should fail due to device, not color parsing
         assert!(
@@ -680,7 +682,8 @@ mod color_parsing {
         let cli = CliRunner::new();
         let result = cli.run_robot(&["fill-all", "#00FF00"]);
         result.assert_failure();
-        let json = result.json();
+        // Robot mode outputs errors to stderr
+        let json = result.json_stderr();
         let msg = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
         assert!(
             msg.to_lowercase().contains("device") || msg.to_lowercase().contains("stream deck"),
@@ -729,8 +732,8 @@ mod batch_robot_output {
         let result = cli.run_robot(&["set-keys", images.path_str()]);
         result.assert_failure();
 
-        // Robot mode should output valid JSON error
-        let json = result.json();
+        // Robot mode outputs errors to stderr
+        let json = result.json_stderr();
         assert_eq!(
             json.get("error").and_then(|v| v.as_bool()),
             Some(true),
@@ -744,7 +747,8 @@ mod batch_robot_output {
         let result = cli.run_robot(&["clear-all"]);
         result.assert_failure();
 
-        let json = result.json();
+        // Robot mode outputs errors to stderr
+        let json = result.json_stderr();
         assert_eq!(
             json.get("error").and_then(|v| v.as_bool()),
             Some(true),
@@ -762,7 +766,8 @@ mod batch_robot_output {
         let result = cli.run_robot(&["fill-all", "#FF0000"]);
         result.assert_failure();
 
-        let json = result.json();
+        // Robot mode outputs errors to stderr
+        let json = result.json_stderr();
         assert_eq!(
             json.get("error").and_then(|v| v.as_bool()),
             Some(true),
@@ -776,7 +781,8 @@ mod batch_robot_output {
         let result = cli.run_robot(&["fill-key", "0", "#00FF00"]);
         result.assert_failure();
 
-        let json = result.json();
+        // Robot mode outputs errors to stderr
+        let json = result.json_stderr();
         assert!(
             json.get("recoverable").is_some(),
             "Robot error should have recoverable field"
@@ -893,28 +899,35 @@ mod dry_run_output {
         let cli = CliRunner::new();
         let images = TestImages::create_batch(4, 72);
 
-        // Dry run should show what would happen
-        // Note: Still needs device to get key count, so will fail without device
+        // Dry run succeeds even without device, indicating disconnected state
         let result = cli.run_robot_dry_run(&["set-keys", images.path_str()]);
-        result.assert_failure(); // No device
+        result.assert_success();
 
-        // But should be valid JSON
+        // Should be valid JSON with dry_run flag
         let json = result.json();
         assert!(json.is_object(), "Dry run should output JSON object");
+        assert_eq!(json.get("dry_run").and_then(|v| v.as_bool()), Some(true));
+        // Device should be marked as disconnected
+        let device = json.get("device").expect("Expected device field");
+        assert_eq!(
+            device.get("connected").and_then(|v| v.as_bool()),
+            Some(false)
+        );
     }
 
     #[test]
-    fn brightness_dry_run_requires_device() {
+    fn brightness_dry_run_shows_disconnected() {
         let cli = CliRunner::new();
         let result = cli.run_robot_dry_run(&["brightness", "50"]);
-        result.assert_failure();
+        result.assert_success();
 
-        // Error should mention device
+        // Dry run JSON should indicate device is disconnected
         let json = result.json();
-        let msg = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(
-            msg.to_lowercase().contains("device") || msg.to_lowercase().contains("stream deck"),
-            "Dry run error should mention device: {msg}"
+        let device = json.get("device").expect("Expected device field");
+        assert_eq!(
+            device.get("connected").and_then(|v| v.as_bool()),
+            Some(false),
+            "Dry run should indicate device is disconnected"
         );
     }
 }

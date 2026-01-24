@@ -335,6 +335,38 @@ impl CliResult {
             .unwrap_or_else(|_| panic!("Failed to parse JSON from stdout:\n{}", self.stdout))
     }
 
+    /// Parse stderr as JSON (for robot mode errors).
+    ///
+    /// # Panics
+    ///
+    /// Panics if stderr is not valid JSON.
+    #[must_use]
+    pub fn json_stderr(&self) -> Value {
+        serde_json::from_str(&self.stderr)
+            .unwrap_or_else(|_| panic!("Failed to parse JSON from stderr:\n{}", self.stderr))
+    }
+
+    /// Parse JSON from either stdout or stderr (tries stdout first, then stderr).
+    /// Useful for robot mode where success goes to stdout and errors go to stderr.
+    ///
+    /// # Panics
+    ///
+    /// Panics if neither stdout nor stderr contains valid JSON.
+    #[must_use]
+    pub fn json_any(&self) -> Value {
+        // Try stdout first (success case)
+        if let Ok(json) = serde_json::from_str::<Value>(&self.stdout) {
+            return json;
+        }
+        // Fall back to stderr (error case)
+        serde_json::from_str(&self.stderr).unwrap_or_else(|_| {
+            panic!(
+                "Failed to parse JSON from stdout or stderr:\nstdout: {}\nstderr: {}",
+                self.stdout, self.stderr
+            )
+        })
+    }
+
     /// Assert a JSON field matches an expected value using JSON pointer syntax.
     ///
     /// # Panics
