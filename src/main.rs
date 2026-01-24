@@ -1714,7 +1714,7 @@ fn cmd_config(cli: &Cli, args: &cli::ConfigArgs) -> Result<()> {
 fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Result<()> {
     use config::declarative::{ConfigFormat, load_config};
     use output::ValidationResult;
-    use tracing::{debug, info, warn};
+    use tracing::{debug, info};
 
     info!(config = %args.config.display(), "Validating configuration file");
 
@@ -1798,7 +1798,7 @@ fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Re
         match key_config {
             config::KeyConfig::Image { image, .. } => {
                 let resolved = if image.starts_with("~") {
-                    if let Some(home) = config::home_dir() {
+                    if let Ok(home) = config::home_dir() {
                         home.join(image.strip_prefix("~").unwrap_or(image))
                     } else {
                         image.clone()
@@ -1848,7 +1848,7 @@ fn cmd_validate(_cli: &Cli, args: &cli::ValidateArgs, output: &dyn Output) -> Re
 
     // Phase 6: Device-specific validation (optional, if device connected)
     // Try to get device info, but don't fail if no device
-    match list_devices() {
+    match device::list_devices() {
         Ok(devices) if !devices.is_empty() => {
             let device_info = &devices[0];
             let key_count = device_info.key_count;
@@ -2115,16 +2115,16 @@ fn cmd_apply(cli: &Cli, args: &cli::ApplyArgs, output: &dyn Output) -> Result<()
 /// Apply a single key configuration to the device.
 fn apply_key_config(
     device: &impl DeviceOperations,
-    device_info: &device::DeviceInfo,
+    _device_info: &device::DeviceInfo,
     key: u8,
     key_config: &config::KeyConfig,
     config_path: &std::path::Path,
 ) -> Result<BatchKeyResult> {
     match key_config {
-        config::KeyConfig::Image { image, resize } => {
+        config::KeyConfig::Image { image, .. } => {
             // Resolve image path relative to config file
             let resolved = if image.starts_with("~") {
-                if let Some(home) = config::home_dir() {
+                if let Ok(home) = config::home_dir() {
                     home.join(image.strip_prefix("~").unwrap_or(image))
                 } else {
                     image.clone()
@@ -2138,20 +2138,20 @@ fn apply_key_config(
                 image.clone()
             };
 
-            device::set_key_image(device, key, &resolved, *resize)?;
+            device.set_key_image(key, &resolved, image_ops::ResizeStrategy::Fit)?;
             state::record::set_key(key, resolved.clone());
             Ok(BatchKeyResult::set_key_success(key, &resolved))
         }
         config::KeyConfig::Color { color } => {
             let (r, g, b) = color.to_rgb()?;
-            device::fill_key_color(device, key, (r, g, b))?;
+            device.fill_key_color(key, (r, g, b))?;
             let color_str = format!("#{:02x}{:02x}{:02x}", r, g, b);
             state::record::fill_key(key, color_str.clone());
             Ok(BatchKeyResult::fill_success(key, &color_str))
         }
         config::KeyConfig::Clear { clear } => {
             if *clear {
-                device::clear_key(device, key)?;
+                device.clear_key(key)?;
                 state::record::clear_key(key);
                 Ok(BatchKeyResult::clear_success(key))
             } else {
@@ -2165,7 +2165,7 @@ fn apply_key_config(
                 })
             }
         }
-        config::KeyConfig::Pattern { pattern, resize } => {
+        config::KeyConfig::Pattern { pattern, .. } => {
             // Resolve pattern by substituting {index}
             let filename = pattern
                 .replace("{index}", &key.to_string())
@@ -2173,7 +2173,7 @@ fn apply_key_config(
                 .replace("{index:03d}", &format!("{:03}", key));
 
             let resolved = if filename.starts_with("~") {
-                if let Some(home) = config::home_dir() {
+                if let Ok(home) = config::home_dir() {
                     home.join(filename.strip_prefix("~").unwrap_or(&filename))
                 } else {
                     std::path::PathBuf::from(&filename)
@@ -2187,7 +2187,7 @@ fn apply_key_config(
                 std::path::PathBuf::from(&filename)
             };
 
-            device::set_key_image(device, key, &resolved, *resize)?;
+            device.set_key_image(key, &resolved, image_ops::ResizeStrategy::Fit)?;
             state::record::set_key(key, resolved.clone());
             Ok(BatchKeyResult::set_key_success(key, &resolved))
         }
