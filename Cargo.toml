@@ -46,7 +46,7 @@ anyhow = "1.0"
 # Terminal output
 indicatif = "0.17"
 console = "0.15"
-rich_rust = { path = "../rich_rust", features = ["json"] }
+rich_rust = { version = "0.2.0", path = "../rich_rust", features = ["json"] }
 
 # Logging
 tracing = "0.1"
